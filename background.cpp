@@ -198,6 +198,8 @@ void init_opengl(void)
 	//glClear(GL_COLOR_BUFFER_BIT);
 	//Do this to allow texture maps
 	glEnable(GL_TEXTURE_2D);
+	glEnable(GL_TEXTURE_2D);
+    initialize_fonts();
 	//
 	//load the images file into a ppm structure.
 	//
@@ -280,9 +282,9 @@ void render()
    // glColor3ub(255, 255, 255);    
 
 	unsigned int c = 0x00ffff44;
-    r.bot = g.yres - 20;
-    r.left = 10;
+    r.bot = g.yres/2;
+    r.left = (g.xres/2) -65;
     r.center = 0;
+    	ggprint16(&r, 0, c, "Galaxy Overdrive");
 
-    ggprint8b(&r, 16, c, "Game");
 }
