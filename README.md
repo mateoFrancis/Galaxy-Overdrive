@@ -3,7 +3,7 @@
 ## Github Terminal Guide
 
 ### Cloning the Repository:
-git clone https://github.com/mateoFrancis/AtmoApp
+git clone https://github.com/mateoFrancis/Galazy-Overdrive
 <br><br>
 
 ### Pushing commands
