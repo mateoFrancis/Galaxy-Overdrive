@@ -1,0 +1,146 @@
+## 1. Core Game Concept (Implementation Blueprint)
+
+### Core Loop
+
+* Survive wave
+* Gain XP
+* Level up → allocate stats or evolve class
+* Harder wave spawns
+* Repeat until death
+
+**Score =** time survived + damage dealt + bosses killed
+
+> Keep it simple at first. Scope creep kills prototypes.
+
+---
+
+## 2. MVP Implementation Plan
+### Base Player Properties
+
+```
+hp
+maxHp
+damage
+fireRate
+projectileSpeed
+movementSpeed
+xp
+level
+upgradePoints
+```
+
+### Shooting System
+
+* Continuous auto-fire (Diep.io style)
+* OR hold-to-fire (Galaga style)
+* Use object pooling for bullets
+
+### Movement
+
+* WASD or Arrow Keys
+* Clamp position inside screen bounds
+
+---
+
+## Enemy System
+
+### Enemy Types
+
+* Basic swarm enemy (Galaga-style dive)
+* Tank enemy (high HP, slow)
+* Sniper enemy (long-range projectile)
+* Boss (patterned bullet hell)
+
+### Enemy Properties
+
+```
+hp
+speed
+damage
+patternType
+xpDrop
+```
+
+---
+
+## Wave System (Galaga Influence)
+
+### Advanced Wave Types
+
+* Formation waves
+* Dive bomb waves
+* Mini-boss every 5 waves
+* Boss every 10 waves
+
+---
+
+## Upgrade System
+
+### On Level Up
+
+Player chooses between:
+
+#### Stat Upgrades
+
+* +Damage
+* +Fire Rate
+* +Bullet Speed
+* +Max HP
+* +Movement Speed
+
+#### OR Class Evolution (Every 10 Levels)
+
+Example Class Tree:
+
+```
+Base Ship
+  → Rapid Gunner
+  → Spread Cannon
+  → Beam Destroyer
+  → Drone Commander
+```
+
+Each evolution modifies:
+
+* Fire pattern
+* Projectile type
+* Passive bonus
+
+---
+
+## 3. Combat Feel (Most Important)
+
+If combat doesn’t feel good, the game fails.
+
+Focus on:
+
+* Screen shake on hit
+* Enemy hit flash
+* Clean projectile trails
+* Clear damage feedback
+* Increasing bullet density over time
+
+Bullet patterns are where the Galaga influence shines.
+
+### Example Boss Patterns
+
+* Circular radial burst
+* Spiral rotating stream
+* Targeted sniper shots
+
+---
+
+## 4. Scaling Model
+
+Avoid exponential difficulty spikes early.
+
+### Use Linear Scaling For:
+
+* Enemy HP
+* Enemy spawn count
+
+### Difficulty Modifiers
+
+* After wave 15 → faster enemies
+* After wave 25 → mixed attack patterns
+* After wave 40 → bullet hell phase
