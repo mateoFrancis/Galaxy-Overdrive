@@ -1,0 +1,591 @@
+// Game:    GALAXY OVERDRIVE
+// File:    intro.cpp
+// Compile: g++ intro.cpp -o intro -lGL -lGLU -lX11 -lGLX -lopenal -lm
+//          (fonts.h / fonts.cpp must be in the same directory)
+//
+// Scenes:
+//   0 = Intro  – Galaga ship swoops in, fires at a diep tank, explosion,
+//                title fades in, auto-transitions after ~6s (Space/Enter skips)
+//   1 = Title  – Starfield scrolls, orbiting satellite (Lab 5) in corner,
+//                PLAY / HELP menu with selection highlight
+//
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <math.h>
+#include <time.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <GL/glx.h>
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include <AL/al.h>
+#include <AL/alc.h>
+#include "fonts.h"
+
+#define PI 3.14159265358979f
+
+class Image {
+public:
+    int width, height;
+    unsigned char *data;
+    Image() : width(0), height(0), data(NULL) {}
+    ~Image() { delete [] data; }
+    bool load(const char *fname) {
+        char name[128]; strncpy(name, fname, 127);
+        int slen = strlen(name);
+        char base[128]; strncpy(base, name, slen-4); base[slen-4]='\0';
+        char ppm[256];  sprintf(ppm,  "%s.ppm", base);
+        char cmd[512];  sprintf(cmd,  "convert %s %s", fname, ppm);
+        system(cmd);
+        FILE *fp = fopen(ppm, "r");
+        if (!fp) { printf("ERROR: cannot open %s\n", ppm); return false; }
+        char line[200];
+        fgets(line, 200, fp);
+        fgets(line, 200, fp);
+        while (line[0]=='#' || strlen(line)<2) fgets(line, 200, fp);
+        sscanf(line, "%i %i", &width, &height);
+        fgets(line, 200, fp);
+        int n = width * height * 3;
+        data = new unsigned char[n];
+        for (int i=0; i<n; i++) data[i] = fgetc(fp);
+        fclose(fp);
+        unlink(ppm);
+        return true;
+    }
+};
+
+// Scrolls vertically (y) exactly as in the Galaxy Overdrive background.cpp
+struct BgTex {
+    Image   img;
+    GLuint  id;
+    float   xc[2], yc[2];
+    bool    ok;
+    BgTex() : id(0), ok(false) {
+        xc[0]=0.f; xc[1]=1.f;
+        yc[0]=0.f; yc[1]=1.f;
+    }
+    void init(const char *fname) {
+        if (!img.load(fname)) return;
+        glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 3, img.width, img.height, 0,
+                     GL_RGB, GL_UNSIGNED_BYTE, img.data);
+        ok = true;
+    }
+    void update() {          // scroll downward like background.cpp physics()
+        yc[0] += 0.001f;
+        yc[1] += 0.001f;
+    }
+    void draw(int xres, int yres) {
+        if (!ok) return;
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glColor4f(1,1,1,1);
+        glBegin(GL_QUADS);
+            glTexCoord2f(xc[0], yc[1]); glVertex2i(0,    0);
+            glTexCoord2f(xc[0], yc[0]); glVertex2i(0,    yres);
+            glTexCoord2f(xc[1], yc[0]); glVertex2i(xres, yres);
+            glTexCoord2f(xc[1], yc[1]); glVertex2i(xres, 0);
+        glEnd();
+        glDisable(GL_TEXTURE_2D);
+    }
+} bg;
+
+struct Global {
+    int   xres, yres;
+    float time;
+    int   scene;    // 0=intro  1=title
+    int   sel;      // menu selection: 0=PLAY  1=HELP
+    bool  running;
+    Global(): xres(800),yres(600),time(0),scene(0),sel(0),running(true){}
+} g;
+
+ALCdevice  *alDev=NULL; ALCcontext *alCtx=NULL;
+ALuint      alSrc=0,    alBuf=0;
+
+void alInit() {
+    alDev = alcOpenDevice(NULL);
+    if (!alDev) return;
+    alCtx = alcCreateContext(alDev, NULL);
+    alcMakeContextCurrent(alCtx);
+    alGenSources(1,&alSrc); alGenBuffers(1,&alBuf);
+    const int SR=22050; const float D=0.25f;
+    int n=(int)(SR*D); short *d=new short[n];
+    for (int i=0;i<n;i++) {
+        float t=(float)i/SR, e=1.f-t/D;
+        d[i]=(short)(28000*e*sinf(2*PI*440*t));
+    }
+    alBufferData(alBuf,AL_FORMAT_MONO16,d,n*2,SR);
+    delete[]d;
+    alSourcei(alSrc,AL_BUFFER,alBuf);
+}
+void beep(float pitch=1.f,float gain=0.5f) {
+    if (!alDev) return;
+    alSourceStop(alSrc);
+    alSourcef(alSrc,AL_PITCH,pitch);
+    alSourcef(alSrc,AL_GAIN,gain);
+    alSourcePlay(alSrc);
+}
+void alDone() {
+    if (!alDev) return;
+    alDeleteSources(1,&alSrc); alDeleteBuffers(1,&alBuf);
+    alcMakeContextCurrent(NULL); alcDestroyContext(alCtx);
+    alcCloseDevice(alDev);
+}
+
+Display *dpy=NULL; Window win; GLXContext glc;
+
+void x11Init() {
+    dpy = XOpenDisplay(NULL);
+    if (!dpy) { puts("no display"); exit(1); }
+    Window root = DefaultRootWindow(dpy);
+    GLint att[]={GLX_RGBA,GLX_DEPTH_SIZE,24,GLX_DOUBLEBUFFER,None};
+    XVisualInfo *vi = glXChooseVisual(dpy,0,att);
+    Colormap cm = XCreateColormap(dpy,root,vi->visual,AllocNone);
+    XSetWindowAttributes swa;
+    swa.colormap=cm;
+    swa.event_mask=KeyPressMask|KeyReleaseMask|StructureNotifyMask;
+    win=XCreateWindow(dpy,root,0,0,g.xres,g.yres,0,
+                      vi->depth,InputOutput,vi->visual,
+                      CWColormap|CWEventMask,&swa);
+    XMapWindow(dpy,win);
+    XStoreName(dpy,win,"Galaxy Overdrive");
+    glc=glXCreateContext(dpy,vi,NULL,GL_TRUE);
+    glXMakeCurrent(dpy,win,glc);
+    glViewport(0,0,g.xres,g.yres);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    glOrtho(0,g.xres,0,g.yres,-1,1);
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glClearColor(0,0,0,1);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    initialize_fonts();
+    bg.init("Starfield08.png");
+}
+
+static void circle(float x,float y,float r,int s,
+                   float R,float G,float B,float A=1.f) {
+    glColor4f(R,G,B,A);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,y);
+    for (int i=0;i<=s;i++) {
+        float a=2*PI*i/s;
+        glVertex2f(x+cosf(a)*r, y+sinf(a)*r);
+    }
+    glEnd();
+}
+static void ring(float x,float y,float r,int s,
+                 float R,float G,float B,float A=1.f,float lw=1.5f) {
+    glLineWidth(lw); glColor4f(R,G,B,A);
+    glBegin(GL_LINE_LOOP);
+    for (int i=0;i<s;i++) {
+        float a=2*PI*i/s;
+        glVertex2f(x+cosf(a)*r, y+sinf(a)*r);
+    }
+    glEnd();
+}
+static void quad(float x,float y,float w,float h,
+                 float R,float G,float B,float A=1.f) {
+    glColor4f(R,G,B,A);
+    glBegin(GL_QUADS);
+    glVertex2f(x,y);   glVertex2f(x+w,y);
+    glVertex2f(x+w,y+h); glVertex2f(x,y+h);
+    glEnd();
+}
+
+void drawTank(float x,float y,float sc,float ang,
+              float R,float G,float B,float A=1.f) {
+    glPushMatrix();
+    glTranslatef(x,y,0); glRotatef(ang*180/PI,0,0,1);
+    float bw=sc*.28f, bh=sc*.85f;
+    glColor4f(R*.6f,G*.6f,B*.6f,A);
+    glBegin(GL_QUADS);
+    glVertex2f(-bw,0);glVertex2f(bw,0);
+    glVertex2f(bw,bh);glVertex2f(-bw,bh);
+    glEnd();
+    glLineWidth(1.4f); glColor4f(.8f,.85f,.9f,A*.7f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(-bw,0);glVertex2f(bw,0);
+    glVertex2f(bw,bh);glVertex2f(-bw,bh);
+    glEnd();
+    glPopMatrix();
+    circle(x,y,sc*.52f,20,R,G,B,A);
+    ring  (x,y,sc*.52f,20,.85f,.9f,1.f,A*.8f,2.f);
+}
+
+void drawShip(float x,float y,float sc,
+              float R,float G,float B,float A=1.f) {
+    glColor4f(R,G,B,A);
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(x,            y+sc);
+    glVertex2f(x-sc*.55f,    y-sc*.5f);
+    glVertex2f(x-sc*.18f,    y-sc*.1f);
+    glVertex2f(x+sc*.18f,    y-sc*.1f);
+    glVertex2f(x+sc*.55f,    y-sc*.5f);
+    glEnd();
+    // wings
+    glBegin(GL_TRIANGLES);
+    glVertex2f(x-sc*.55f, y-sc*.5f);
+    glVertex2f(x-sc*1.1f, y-sc*.8f);
+    glVertex2f(x-sc*.25f, y-sc*.65f);
+    glVertex2f(x+sc*.55f, y-sc*.5f);
+    glVertex2f(x+sc*1.1f, y-sc*.8f);
+    glVertex2f(x+sc*.25f, y-sc*.65f);
+    glEnd();
+    // engine glow
+    float glow = .4f+.3f*sinf(g.time*8.f);
+    circle(x, y-sc*.35f, sc*.15f, 8, glow,.6f,1.f, A*.85f);
+}
+
+#define TLEN 150
+struct Orbit {
+    float px,py,pr;
+    float sx,sy,vx,vy,sr;
+    float tx[TLEN],ty[TLEN];
+    int   th,tc;
+    void init(float _px,float _py,float _pr,
+              float _sx,float _sy,float _sr) {
+        px=_px;py=_py;pr=_pr;sx=_sx;sy=_sy;sr=_sr;
+        float dx=sx-px,dy=sy-py,dist=sqrtf(dx*dx+dy*dy);
+        float spd=sqrtf(900.f/dist);
+        vx=(-dy/dist)*spd; vy=(dx/dist)*spd;
+        th=tc=0;
+    }
+    void update(float dt) {
+        float dx=px-sx,dy=py-sy,dist=sqrtf(dx*dx+dy*dy);
+        if (dist<pr+sr) return;
+        float ac=900.f/(dist*dist);
+        vx+=(dx/dist)*ac*dt; vy+=(dy/dist)*ac*dt;
+        sx+=vx*dt; sy+=vy*dt;
+        tx[th]=sx; ty[th]=sy;
+        th=(th+1)%TLEN; if(tc<TLEN)tc++;
+    }
+    void draw(float alpha) {
+        glLineWidth(1.f);
+        for (int i=0;i<tc-1;i++) {
+            int a=(th-tc+i+TLEN)%TLEN, b=(a+1)%TLEN;
+            float fa=((float)i/tc)*.4f*alpha;
+            glColor4f(.5f,.8f,1.f,fa);
+            glBegin(GL_LINES);
+            glVertex2f(tx[a],ty[a]); glVertex2f(tx[b],ty[b]);
+            glEnd();
+        }
+        circle(px,py,pr,   24,.15f,.3f,.6f,  alpha*.55f);
+        ring  (px,py,pr,   24,.3f,.6f,1.f,   alpha*.5f,1.5f);
+        ring  (px,py,pr+6, 24,.2f,.4f,.9f,   alpha*.18f,1.f);
+        // highlight
+        circle(px+pr*.3f,py+pr*.3f,pr*.28f,10,.6f,.8f,1.f,alpha*.12f);
+        // satellite
+        circle(sx,sy,sr,8,.85f,.95f,1.f,alpha*.95f);
+        glLineWidth(1.f); glColor4f(.6f,.85f,1.f,alpha*.55f);
+        glBegin(GL_LINES);
+        glVertex2f(sx-sr*2.8f,sy); glVertex2f(sx+sr*2.8f,sy);
+        glVertex2f(sx,sy-sr*2.8f); glVertex2f(sx,sy+sr*2.8f);
+        glEnd();
+    }
+} orbit;
+
+struct Part { float x,y,vx,vy,life,ml,r,gr,b,sz; };
+#define PMAX 80
+Part parts[PMAX]; int np=0;
+
+void burst(float x,float y) {
+    np=0;
+    for (int i=0;i<PMAX;i++) {
+        float ang=2*PI*i/PMAX;
+        float spd=60.f+(rand()%160);
+        parts[np]={x,y,cosf(ang)*spd,sinf(ang)*spd,
+                   .7f+(rand()%35)*.01f, .7f+(rand()%35)*.01f,
+                   .8f+(rand()%20)*.01f, .25f+(rand()%40)*.01f,
+                   (rand()%25)*.01f, 2.5f+(float)(rand()%5)};
+        parts[np].ml=parts[np].life;
+        np++;
+    }
+}
+void updateParts(float dt) {
+    for (int i=0;i<np;) {
+        parts[i].x+=parts[i].vx*dt;
+        parts[i].y+=parts[i].vy*dt;
+        parts[i].vy-=45.f*dt;
+        parts[i].life-=dt;
+        if (parts[i].life<=0){parts[i]=parts[--np];continue;}
+        i++;
+    }
+}
+void drawParts() {
+    for (int i=0;i<np;i++) {
+        float a=parts[i].life/parts[i].ml;
+        circle(parts[i].x,parts[i].y,parts[i].sz*a,6,
+               parts[i].r,parts[i].gr,parts[i].b,a);
+    }
+}
+
+struct {
+    float sx,sy;              // ship position
+    float bx,by;              // bullet position
+    bool  bactive,exploded;
+    float exT;                // explosion timer
+    float tankA;              // tank alpha
+    float titleA;             // title alpha
+} I;
+
+void introReset() {
+    I.sx=-80; I.sy=g.yres+60;
+    I.bactive=I.exploded=false;
+    I.bx=I.by=0;
+    I.exT=-1; I.tankA=1.f; I.titleA=0.f;
+}
+
+void updateIntro(float dt) {
+    float t=g.time;
+    bg.update();
+
+    // phase 1 (0-2s): ship swoops from top-left to centre
+    if (t<2.f) {
+        float p=t/2.f, e=p*p*(3-2*p);
+        I.sx=-80+e*(g.xres/2.f+80);
+        I.sy=g.yres+60-e*(g.yres+60-g.yres*.66f);
+    }
+    // phase 2 (2-2.6s): hold + fire
+    if (t>=2.f && t<2.6f) {
+        I.sx=g.xres/2.f; I.sy=g.yres*.66f;
+        if (!I.bactive && !I.exploded) {
+            I.bactive=true;
+            I.bx=I.sx; I.by=I.sy-30;
+            beep(1.6f,.55f);
+        }
+    }
+    // bullet travels down
+    if (I.bactive && !I.exploded) {
+        I.by-=400.f*dt;
+        if (I.by < g.yres*.28f+20) {
+            I.bactive=false; I.exploded=true; I.exT=0;
+            burst(g.xres/2.f, g.yres*.28f);
+            beep(.42f,1.f);
+        }
+    }
+    // explosion + tank fade
+    if (I.exT>=0) {
+        I.exT+=dt;
+        I.tankA=1.f-I.exT/.45f;
+        if (I.tankA<0) I.tankA=0;
+    }
+    updateParts(dt);
+
+    // title fade-in at 3.5s
+    if (t>3.5f) { I.titleA+=dt*.75f; if(I.titleA>1)I.titleA=1; }
+
+    // auto-advance at 6s
+    if (t>6.f) { g.scene=1; beep(1.2f,.4f); }
+}
+
+void renderIntro() {
+    bg.draw(g.xres,g.yres);
+    quad(0,0,g.xres,g.yres, 0,0,.04f,.42f);   // subtle dark overlay
+
+    // tank (target)
+    if (I.tankA>0)
+        drawTank(g.xres/2.f,g.yres*.28f,36.f,
+                 PI*.5f+sinf(g.time*.6f)*.2f,
+                 .25f,.45f,.85f,I.tankA);
+
+    // bullet + trail
+    if (I.bactive) {
+        for (int i=1;i<=5;i++)
+            circle(I.bx,I.by+i*9,3.5f*(1-i*.14f),6,1,.85f,.2f,.5f/i);
+        circle(I.bx,I.by,5,8,1,.95f,.3f,1);
+    }
+
+    // shockwave rings
+    if (I.exT>=0 && I.exT<.7f) {
+        float er=I.exT/.7f;
+        ring(g.xres/2.f,g.yres*.28f,er*140,32,1,.5f,.1f,(1-er)*.9f,3.5f);
+        ring(g.xres/2.f,g.yres*.28f,er*80, 32,1,.85f,.3f,(1-er)*.55f,2.f);
+    }
+    drawParts();
+
+    // ship + engine trail
+    drawShip(I.sx,I.sy,22,.55f,.8f,1.f);
+    for (int i=1;i<=5;i++)
+        circle(I.sx,I.sy-22*.35f-i*9,22*.13f*(1-i*.15f),6,.3f,.6f,1.f,.45f/i);
+
+    // title fade-in (fonts.h ggprint)
+    if (I.titleA>0) {
+        Rect r;
+        r.bot=(int)(g.yres*.75f); r.left=0; r.center=1;
+        unsigned int col=((unsigned int)(I.titleA*255)<<24)|0x00aaddff;
+        ggprint16(&r,0,col,"GALAXY OVERDRIVE");
+    }
+}
+
+struct {
+    float alpha;
+    float ringR, ringDir;
+    bool  inited;
+} T = {0,60,1,false};
+
+void updateTitle(float dt) {
+    if (!T.inited) {
+        T.inited=true;
+        orbit.init(g.xres*.8f,g.yres*.78f,30.f,
+                   g.xres*.8f-95.f,g.yres*.78f,5.f);
+    }
+    bg.update();
+    orbit.update(dt);
+    T.alpha+=dt*1.2f; if(T.alpha>1)T.alpha=1;
+    T.ringR+=T.ringDir*20.f*dt;
+    if(T.ringR>78)T.ringDir=-1;
+    if(T.ringR<46)T.ringDir=1;
+}
+
+void renderTitle() {
+    float a=T.alpha;
+
+    bg.draw(g.xres,g.yres);
+    quad(0,0,g.xres,g.yres, 0,0,.04f,.35f);   // slight vignette
+
+    // Lab 5: orbiting satellite top-right
+    orbit.draw(a*.55f);
+
+    // Faint corner tanks (decorative)
+    float cx[4]={130,g.xres-130.f,100,g.xres-100.f};
+    float cy[4]={130,130,g.yres-100.f,g.yres-100.f};
+    for (int i=0;i<4;i++)
+        drawTank(cx[i],cy[i],20,g.time*.35f+i*1.57f,.1f,.2f,.45f,a*.2f);
+
+    // Two ghost ships drifting upward on edges
+    float sy=fmodf(g.time*38.f,(float)g.yres);
+    drawShip(52,sy,12,.1f,.22f,.5f,a*.2f);
+    drawShip(g.xres-52,fmodf(sy+g.yres*.5f,(float)g.yres),12,.1f,.22f,.5f,a*.2f);
+
+    // Pulsing rings centred on title
+    float tcx=g.xres/2.f, tcy=g.yres*.70f;
+    ring(tcx,tcy+14,T.ringR,   32,.2f,.45f,.9f,a*.16f,1.2f);
+    ring(tcx,tcy+14,T.ringR*.62f,32,.15f,.35f,.75f,a*.1f,1.f);
+
+    // Title text – glow pass then solid pass
+    {
+        Rect r; r.center=1;
+        r.bot=(int)tcy+2; r.left=-2;
+        unsigned int gc=((unsigned int)(a*70)<<24)|0x0033aaff;
+        ggprint16(&r,0,gc,"GALAXY OVERDRIVE");
+
+        r.bot=(int)tcy; r.left=0;
+        unsigned int mc=((unsigned int)(a*255)<<24)|0x00aaddff;
+        ggprint16(&r,0,mc,"GALAXY OVERDRIVE");
+    }
+
+    // Thin divider line under title
+    glLineWidth(1.2f); glColor4f(.3f,.55f,.9f,a*.45f);
+    glBegin(GL_LINES);
+    glVertex2f(tcx-155,tcy-44); glVertex2f(tcx+155,tcy-44);
+    glEnd();
+
+    const char *labels[2]={"PLAY","HELP"};
+    float my[2]={g.yres*.44f,g.yres*.32f};
+
+    for (int i=0;i<2;i++) {
+        bool sel=(g.sel==i);
+        if (sel) {
+            // selection box
+            quad(tcx-82,my[i]-6,164,30,.12f,.28f,.6f,a*.45f);
+            glLineWidth(1.5f); glColor4f(.35f,.65f,1.f,a*.8f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(tcx-82,my[i]-6);  glVertex2f(tcx+82,my[i]-6);
+            glVertex2f(tcx+82,my[i]+24); glVertex2f(tcx-82,my[i]+24);
+            glEnd();
+            // arrow
+            float ax=tcx-97,ay=my[i]+9;
+            glLineWidth(2.f); glColor4f(.5f,.85f,1.f,a);
+            glBegin(GL_LINES);
+            glVertex2f(ax,ay);    glVertex2f(ax+10,ay);
+            glVertex2f(ax+10,ay+4);glVertex2f(ax+16,ay);
+            glVertex2f(ax+10,ay-4);glVertex2f(ax+10,ay);
+            glEnd();
+        }
+        Rect mr; mr.center=1; mr.bot=(int)my[i]; mr.left=0;
+        unsigned int mc = sel
+            ? (((unsigned int)(a*255)<<24)|0x00cceeff)
+            : (((unsigned int)(a*170)<<24)|0x005577aa);
+        ggprint16(&mr,0,mc,labels[i]);
+    }
+
+    // Footer
+    {
+        Rect r; r.center=1; r.bot=20; r.left=0;
+        unsigned int fc=((unsigned int)(a*110)<<24)|0x003355aa;
+        ggprint8b(&r,0,fc,"UP / DOWN    ENTER TO SELECT");
+    }
+}
+
+void handleKey(int key,bool dn) {
+    if (!dn) return;
+    if (g.scene==0) {
+        if (key==XK_Return||key==XK_space) { g.scene=1; g.time=0; }
+    } else {
+        if (key==XK_Up||key==XK_Down) {
+            g.sel=(g.sel+1)%2;
+            beep(g.sel?1.5f:1.8f,.3f);
+        }
+        if (key==XK_Return) beep(2.f,.65f);  // hook: launch game here
+    }
+    if (key==XK_Escape) g.running=false;
+}
+
+int main() {
+    srand((unsigned)time(NULL));
+    x11Init();
+    alInit();
+    introReset();
+
+    struct timespec tp,tc;
+    clock_gettime(CLOCK_MONOTONIC,&tp);
+
+    while (g.running) {
+        clock_gettime(CLOCK_MONOTONIC,&tc);
+        float dt=(float)(tc.tv_sec-tp.tv_sec)
+                +(float)(tc.tv_nsec-tp.tv_nsec)*1e-9f;
+        tp=tc;
+        if(dt>.05f)dt=.05f;
+        g.time+=dt;
+
+        while (XPending(dpy)) {
+            XEvent e; XNextEvent(dpy,&e);
+            if (e.type==KeyPress||e.type==KeyRelease)
+                handleKey(XLookupKeysym(&e.xkey,0),e.type==KeyPress);
+            if (e.type==ConfigureNotify) {
+                g.xres=e.xconfigure.width;
+                g.yres=e.xconfigure.height;
+                glViewport(0,0,g.xres,g.yres);
+                glMatrixMode(GL_PROJECTION);glLoadIdentity();
+                glOrtho(0,g.xres,0,g.yres,-1,1);
+                glMatrixMode(GL_MODELVIEW);glLoadIdentity();
+            }
+        }
+
+        if (g.scene==0) updateIntro(dt);
+        else            updateTitle(dt);
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (g.scene==0) renderIntro();
+        else            renderTitle();
+
+        glXSwapBuffers(dpy,win);
+        usleep(8000);
+    }
+
+    cleanup_fonts();
+    alDone();
+    glXMakeCurrent(dpy,None,NULL);
+    glXDestroyContext(dpy,glc);
+    XDestroyWindow(dpy,win);
+    XCloseDisplay(dpy);
+    return 0;
+}
+
