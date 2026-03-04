@@ -1,0 +1,474 @@
+//
+// program: background.cpp
+// author:  Gordon Griesel (modified/combined)
+//
+// Sequence:
+//   PHASE_INTRO  - black screen, creative lines appear one by one
+//   PHASE_FADE   - starfield fades in from black (brightness 0->1)
+//   PHASE_TITLE  - full animated title screen
+//   PHASE_PLAY   - game
+//
+// ggprint cref color format is 0x00BBGGRR (little-endian channels).
+// We fake alpha fading by scaling all three channels toward 0 (black).
+//
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <math.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <GL/glx.h>
+#include "fonts.h"
+
+// ============================================================
+// Image loader
+// ============================================================
+class Image {
+public:
+    int width, height;
+    unsigned char *data;
+    ~Image() { delete [] data; }
+    Image(const char *fname) {
+        if (fname[0] == '\0') return;
+        char name[40];
+        strcpy(name, fname);
+        int slen = strlen(name);
+        name[slen-4] = '\0';
+        char ppmname[80];
+        sprintf(ppmname, "%s.ppm", name);
+        char ts[100];
+        sprintf(ts, "convert %s %s", fname, ppmname);
+        system(ts);
+        FILE *fpi = fopen(ppmname, "r");
+        if (fpi) {
+            char line[200];
+            fgets(line, 200, fpi);
+            fgets(line, 200, fpi);
+            while (line[0] == '#' || strlen(line) < 2)
+                fgets(line, 200, fpi);
+            sscanf(line, "%i %i", &width, &height);
+            fgets(line, 200, fpi);
+            int n = width * height * 3;
+            data = new unsigned char[n];
+            for (int i = 0; i < n; i++)
+                data[i] = fgetc(fpi);
+            fclose(fpi);
+        } else {
+            printf("ERROR opening image: %s\n", ppmname);
+            exit(0);
+        }
+        unlink(ppmname);
+    }
+};
+
+Image img[1] = {"Starfield08.png"};
+
+// ============================================================
+// Texture
+// ============================================================
+class Texture {
+public:
+    Image  *backImage;
+    GLuint  backTexture;
+    float   xc[2];
+    float   yc[2];
+};
+
+// ============================================================
+// Global
+// ============================================================
+class Global {
+public:
+    int xres, yres;
+    Texture tex;
+    Global() { xres = 640; yres = 480; }
+} g;
+
+// ============================================================
+// Phases
+// ============================================================
+enum Phase {
+    PHASE_INTRO = 0,
+    PHASE_FADE  = 1,
+    PHASE_TITLE = 2,
+    PHASE_PLAY  = 3
+};
+Phase phase = PHASE_INTRO;
+
+// ============================================================
+// Intro lines
+// Colors packed as 0x00BBGGRR:
+//   dim grey  = 0x00555555
+//   mid grey  = 0x00888888
+//   lt grey   = 0x00aaaaaa
+//   white     = 0x00ffffff
+// ============================================================
+struct IntroLine {
+    const char  *text;
+    unsigned int baseColor; // 0x00BBGGRR at full brightness
+};
+
+static IntroLine introLines[] = {
+    { "G A L A X Y",       0x00ffffff },
+    { "O V E R D R I V E", 0x00ffffff },
+};
+static const int NUM_INTRO_LINES = 2;
+
+// Timing constants (frames at ~60 fps)
+#define LINE_FADEIN   20    // frames to fade a line in
+#define LINE_HOLD    140    // frames a line stays at full brightness
+#define LINE_FADEOUT  60    // frames to fade a line out
+#define LINE_PERIOD  (LINE_FADEIN + LINE_HOLD + LINE_FADEOUT)
+#define FADE_FRAMES  100    // frames for starfield to fade in
+
+static float introTimer = 0.0f;
+static float fadeTimer  = 0.0f;
+static float titleTimer = 0.0f;
+
+// Total intro duration:
+// word1 starts at 0, word2 starts at LINE_FADEIN + LINE_HOLD/2
+// both hold until fadeout, fade out together over LINE_FADEOUT
+#define INTRO_WORD2_START  (LINE_FADEIN + LINE_HOLD / 2)
+#define INTRO_HOLD_END     (INTRO_WORD2_START + LINE_FADEIN + LINE_HOLD)
+static const float INTRO_TOTAL = (float)(INTRO_HOLD_END + LINE_FADEOUT);
+
+// ============================================================
+// X11 wrapper
+// ============================================================
+class X11_wrapper {
+private:
+    Display   *dpy;
+    Window     win;
+    GLXContext glc;
+public:
+    X11_wrapper() {
+        GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
+        dpy = XOpenDisplay(NULL);
+        if (!dpy) { printf("\n\tcannot connect to X server\n\n"); exit(EXIT_FAILURE); }
+        Window root = DefaultRootWindow(dpy);
+        XVisualInfo *vi = glXChooseVisual(dpy, 0, att);
+        if (!vi) { printf("\n\tno appropriate visual found\n\n"); exit(EXIT_FAILURE); }
+        Colormap cmap = XCreateColormap(dpy, root, vi->visual, AllocNone);
+        XSetWindowAttributes swa;
+        swa.colormap   = cmap;
+        swa.event_mask =
+            ExposureMask | KeyPressMask | KeyReleaseMask |
+            PointerMotionMask | ButtonPressMask | ButtonReleaseMask |
+            StructureNotifyMask | SubstructureNotifyMask;
+        win = XCreateWindow(dpy, root, 0, 0, g.xres, g.yres, 0,
+                            vi->depth, InputOutput, vi->visual,
+                            CWColormap | CWEventMask, &swa);
+        XMapWindow(dpy, win);
+        XStoreName(dpy, win, "Galaxy Overdrive");
+        glc = glXCreateContext(dpy, vi, NULL, GL_TRUE);
+        glXMakeCurrent(dpy, win, glc);
+    }
+    ~X11_wrapper() {
+        glXMakeCurrent(dpy, None, NULL);
+        glXDestroyContext(dpy, glc);
+        XDestroyWindow(dpy, win);
+        XCloseDisplay(dpy);
+    }
+    void reshape_window(int w, int h) {
+        g.xres = w; g.yres = h;
+        glViewport(0, 0, w, h);
+        glMatrixMode(GL_PROJECTION); glLoadIdentity();
+        glOrtho(0, g.xres, 0, g.yres, -1, 1);
+        glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    }
+    void check_resize(XEvent *e) {
+        if (e->type != ConfigureNotify) return;
+        XConfigureEvent xce = e->xconfigure;
+        if (xce.width != g.xres || xce.height != g.yres)
+            reshape_window(xce.width, xce.height);
+    }
+    bool   getXPending()   { return XPending(dpy); }
+    XEvent getXNextEvent() { XEvent e; XNextEvent(dpy, &e); return e; }
+    void   swapBuffers()   { glXSwapBuffers(dpy, win); }
+} x11;
+
+// ============================================================
+// Forward declarations
+// ============================================================
+void init_opengl(void);
+void check_mouse(XEvent *e);
+int  check_keys(XEvent *e);
+void physics(void);
+void render(void);
+void skip_to_title(void);
+
+// ============================================================
+// Main
+// ============================================================
+int main()
+{
+    init_opengl();
+    int done = 0;
+    while (!done) {
+        while (x11.getXPending()) {
+            XEvent e = x11.getXNextEvent();
+            x11.check_resize(&e);
+            check_mouse(&e);
+            done = check_keys(&e);
+        }
+        physics();
+        render();
+        x11.swapBuffers();
+    }
+    return 0;
+}
+
+// ============================================================
+// Init
+// ============================================================
+void init_opengl(void)
+{
+    glViewport(0, 0, g.xres, g.yres);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);  glLoadIdentity();
+    glOrtho(0, g.xres, 0, g.yres, -1, 1);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    initialize_fonts();
+
+    g.tex.backImage = &img[0];
+    glGenTextures(1, &g.tex.backTexture);
+    glBindTexture(GL_TEXTURE_2D, g.tex.backTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexImage2D(GL_TEXTURE_2D, 0, 3,
+                 g.tex.backImage->width,
+                 g.tex.backImage->height,
+                 0, GL_RGB, GL_UNSIGNED_BYTE,
+                 g.tex.backImage->data);
+
+    g.tex.xc[0] = 0.0f;  g.tex.xc[1] = 1.0f;
+    g.tex.yc[0] = 0.0f;  g.tex.yc[1] = 1.0f;
+}
+
+// ============================================================
+// Skip intro helper
+// ============================================================
+void skip_to_title(void)
+{
+    phase      = PHASE_TITLE;
+    titleTimer = 0.0f;
+}
+
+// ============================================================
+// Input
+// ============================================================
+void check_mouse(XEvent *e)
+{
+    if (e->type != ButtonPress) return;
+    if (e->xbutton.button == 1) {
+        if (phase == PHASE_INTRO || phase == PHASE_FADE)
+            skip_to_title();
+        else if (phase == PHASE_TITLE)
+            phase = PHASE_PLAY;
+    }
+}
+
+int check_keys(XEvent *e)
+{
+    if (e->type != KeyPress) return 0;
+    int key = XLookupKeysym(&e->xkey, 0);
+    if (key == XK_Escape) return 1;
+    if (phase == PHASE_INTRO || phase == PHASE_FADE) {
+        skip_to_title();
+    } else if (phase == PHASE_TITLE) {
+        if (key == XK_Return || key == XK_space)
+            phase = PHASE_PLAY;
+    }
+    return 0;
+}
+
+// ============================================================
+// Physics
+// ============================================================
+void physics()
+{
+    // Scroll background every frame regardless of phase
+    g.tex.yc[0] += 0.001f;
+    g.tex.yc[1] += 0.001f;
+    if (g.tex.yc[0] > 1.0f) g.tex.yc[0] -= 1.0f;
+    if (g.tex.yc[1] > 1.0f) g.tex.yc[1] -= 1.0f;
+
+    if (phase == PHASE_INTRO) {
+        introTimer += 1.0f;
+        if (introTimer >= INTRO_TOTAL) {
+            phase     = PHASE_FADE;
+            fadeTimer = 0.0f;
+        }
+    } else if (phase == PHASE_FADE) {
+        fadeTimer += 1.0f;
+        if (fadeTimer >= (float)FADE_FRAMES) {
+            fadeTimer  = (float)FADE_FRAMES;
+            phase      = PHASE_TITLE;
+            titleTimer = 0.0f;
+        }
+    } else if (phase == PHASE_TITLE || phase == PHASE_PLAY) {
+        titleTimer += 0.5f;
+    }
+}
+
+// ============================================================
+// draw_background
+// brightness: 0.0 = all black, 1.0 = full texture
+// This is the ONLY way we fade the starfield — no blend tricks,
+// just glColor3f multiplied into the texture sample.
+// ============================================================
+static void draw_background(float brightness)
+{
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g.tex.backTexture);
+    glColor3f(brightness, brightness, brightness);
+    glBegin(GL_QUADS);
+        glTexCoord2f(g.tex.xc[0], g.tex.yc[1]); glVertex2i(0,      0);
+        glTexCoord2f(g.tex.xc[0], g.tex.yc[0]); glVertex2i(0,      g.yres);
+        glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres, g.yres);
+        glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres, 0);
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+    glColor3f(1.0f, 1.0f, 1.0f);
+}
+
+// ============================================================
+// scale_color: multiply 0x00BBGGRR color channels by alpha [0,1]
+// so ggprint text fades toward black.
+// ============================================================
+static unsigned int scale_color(unsigned int col, float alpha)
+{
+    unsigned int R = (unsigned int)(((col      ) & 0xff) * alpha);
+    unsigned int G = (unsigned int)(((col >>  8) & 0xff) * alpha);
+    unsigned int B = (unsigned int)(((col >> 16) & 0xff) * alpha);
+    return (B << 16) | (G << 8) | R;
+}
+
+// ============================================================
+// Render
+// ============================================================
+void render()
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    Rect r;
+
+    // ----------------------------------------------------------
+    // PHASE_INTRO — "GALAXY" fades in, then "OVERDRIVE" joins it,
+    // both hold together, then both fade out into the starfield.
+    // ----------------------------------------------------------
+    if (phase == PHASE_INTRO) {
+        // Word 0: GALAXY    — starts at t=0
+        // Word 1: OVERDRIVE — starts at t = LINE_FADEIN + LINE_HOLD/2
+        //                     so it appears while GALAXY is still showing
+        float offsets[2] = { 0.0f, (float)(LINE_FADEIN + LINE_HOLD / 2) };
+        // Both words fade OUT together starting at INTRO_TOTAL - LINE_FADEOUT
+        float fadeOutStart = INTRO_TOTAL - (float)LINE_FADEOUT;
+
+        for (int i = 0; i < NUM_INTRO_LINES; i++) {
+            float elapsed = introTimer - offsets[i];
+            if (elapsed <= 0.0f) continue;
+
+            float alpha;
+            if (elapsed < (float)LINE_FADEIN) {
+                // fade in
+                alpha = elapsed / (float)LINE_FADEIN;
+            } else if (introTimer < fadeOutStart) {
+                // fully visible
+                alpha = 1.0f;
+            } else {
+                // shared fade out
+                float fo = introTimer - fadeOutStart;
+                alpha = 1.0f - fo / (float)LINE_FADEOUT;
+                if (alpha < 0.0f) alpha = 0.0f;
+            }
+
+            unsigned int fadedColor = scale_color(introLines[i].baseColor, alpha);
+
+            // Center both words, GALAXY above OVERDRIVE
+            int gap  = 40;
+            int midY = g.yres / 2;
+            int ypos = (i == 0) ? midY + gap / 2 : midY - gap / 2;
+
+            r.bot    = ypos;
+            r.left   = g.xres / 2 - 80;
+            r.center = 0;
+            ggprint16(&r, 0, fadedColor, introLines[i].text);
+        }
+    }
+
+    // ----------------------------------------------------------
+    // PHASE_FADE — starfield brightness ramps 0 -> 1
+    // ----------------------------------------------------------
+    else if (phase == PHASE_FADE) {
+        float brightness = fadeTimer / (float)FADE_FRAMES;
+        draw_background(brightness);
+    }
+
+    // ----------------------------------------------------------
+    // PHASE_TITLE — animated title screen
+    // ----------------------------------------------------------
+    else if (phase == PHASE_TITLE) {
+        draw_background(1.0f);
+
+        float t = titleTimer;
+
+        // Bobbing title — cyan = 0x00BBGGRR = 0x00ffff00
+        float bob = sinf(t * 0.05f) * 10.0f;
+        r.bot    = (int)(g.yres * 0.65f + bob);
+        r.left   = g.xres / 2 - 80;
+        r.center = 0;
+        ggprint16(&r, 0, 0x00ffff00, "GALAXY OVERDRIVE");
+
+        // Pulsing prompt — white pulse
+        float pulse  = 0.5f + 0.5f * sinf(t * 0.08f);
+        unsigned int bval = (unsigned int)(150 + pulse * 105);
+        unsigned int pc   = (bval << 16) | (bval << 8) | bval;
+        r.bot  = (int)(g.yres * 0.28f);
+        r.left = g.xres / 2 - 105;
+        ggprint16(&r, 0, pc, "PRESS ENTER / SPACE");
+        r.bot -= 22;
+        r.left = g.xres / 2 - 65;
+        ggprint16(&r, 0, pc, "or LEFT CLICK");
+
+        // Bobbing ship body
+        float shipX = g.xres * 0.5f;
+        float shipY = g.yres * 0.5f + sinf(t * 0.07f) * 8.0f;
+        float wig   = sinf(t * 0.06f) * 5.0f;
+        float sz    = 16.0f;
+
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glBegin(GL_TRIANGLES);
+            glVertex2f(shipX + wig,      shipY + sz);
+            glVertex2f(shipX - sz + wig, shipY - sz);
+            glVertex2f(shipX + sz + wig, shipY - sz);
+        glEnd();
+
+        // Thruster flicker
+        float thr = 6.0f + 4.0f * (0.5f + 0.5f * sinf(t * 0.2f));
+        glColor3f(1.0f, 0.55f, 0.05f);
+        glBegin(GL_TRIANGLES);
+            glVertex2f(shipX + wig,        shipY - sz - thr);
+            glVertex2f(shipX - 5.0f + wig, shipY - sz);
+            glVertex2f(shipX + 5.0f + wig, shipY - sz);
+        glEnd();
+
+        glColor3f(1.0f, 1.0f, 1.0f);
+    }
+
+    // ----------------------------------------------------------
+    // PHASE_PLAY
+    // ----------------------------------------------------------
+    else if (phase == PHASE_PLAY) {
+        draw_background(1.0f);
+        r.bot  = g.yres - 20;
+        r.left = 10;
+        ggprint16(&r, 0, 0x00ffffff, "PLAY MODE (build your game here)");
+    }
+}
