@@ -1,3 +1,5 @@
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,54 +11,115 @@
 #include <GL/glu.h>
 #include "fonts.h"
 
+
 class Image {
 public:
-        int width, height;
-        unsigned char *data;
-        ~Image() { delete [] data; }
-        Image(const char *fname) {
-                if (fname[0] == '\0')
-                        return;
-                char name[40];
-                strcpy(name, fname);
-                int slen = strlen(name);
-                name[slen-4] = '\0';
-                char ppmname[80];
-                sprintf(ppmname,"%s.ppm", name);
-                char ts[200];
-                sprintf(ts, "convert %s -background black -flatten %s", fname, ppmname);
-                system(ts);
-                FILE *fpi = fopen(ppmname, "rb");
-                if (fpi) {
-                        char line[200];
-                        fgets(line, 200, fpi);
-                        fgets(line, 200, fpi);
-                        while (line[0] == '#')
-                                fgets(line, 200, fpi);
-                        sscanf(line, "%i %i", &width, &height);
-                        fgets(line, 200, fpi);
-                        int n = width * height * 3;
-                        data = new unsigned char[n];
-                        for (int i=0; i<n; i++)
-                                data[i] = fgetc(fpi);
-                        fclose(fpi);
-                } else {
-                        printf("ERROR opening image: %s\n", ppmname);
-                        exit(0);
-                }
-                unlink(ppmname);
+    int width, height;
+    unsigned char *data;
+    ~Image() { delete [] data; }
+
+    Image(const char *fname) {
+        if (fname[0] == '\0')
+            return;
+
+        char name[40];
+        strcpy(name, fname);
+        int slen = strlen(name);
+        name[slen-4] = '\0';
+
+        char ppmname[80];
+        sprintf(ppmname, "%s.ppm", name);
+
+        // Keep alpha when converting PNG to PPM
+        char ts[200];
+        sprintf(ts, "convert %s %s", fname, ppmname); 
+        system(ts);
+
+        FILE *fpi = fopen(ppmname, "rb");
+        if (fpi) {
+            char line[200];
+            fgets(line, 200, fpi); 
+            fgets(line, 200, fpi); 
+            while (line[0] == '#')
+                fgets(line, 200, fpi);
+
+            sscanf(line, "%i %i", &width, &height);
+            fgets(line, 200, fpi);
+
+            int n = width * height * 4; // RGBA
+            data = new unsigned char[n];
+
+            for (int i = 0; i < width*height; i++) {
+                   
+                unsigned char r = fgetc(fpi);
+                    unsigned char g = fgetc(fpi);
+                    unsigned char b = fgetc(fpi);
+                    data[i*4+0] = r;
+                    data[i*4+1] = g;
+                    data[i*4+2] = b;
+
+                    // Alpha = 0 if the pixel is background, else 255
+
+                    if (r < 50 && g < 50 && b < 50) 
+                        data[i*4+3] = 0;   // transparent
+                    else
+                        data[i*4+3] = 255; // opaque
+             }
+
+            fclose(fpi);
+        } else {
+            printf("ERROR opening image: %s\n", ppmname);
+            exit(0);
         }
+
+        unlink(ppmname);
+    }
 };
-Image img[2] = {"Starfield08.png", "galov.png"};
+Image img[] = {
+    "./images/Starfield08.png",
+    "./images/galov.png",
+
+    "./ship_sprites/ship_full.png",
+    "./ship_sprites/ship_slight.png",
+    "./ship_sprites/ship_mid.png",
+    "./ship_sprites/ship_very.png",
+
+    "./weapons/cannon.png",
+    "./weapons/rockets.png",
+    "./weapons/spaceGun.png",
+    "./weapons/zapper.png"
+};
 
 class Texture {
 public:
-        Image *backImage;
-        GLuint backTexture;
-        GLuint logoTexture;
-        int logoW, logoH;
-        float xc[2];
-        float yc[2];
+    Image *backImage;
+    Image *ship01Image;
+
+    Image *shipSlightImage;
+    Image *shipMidImage;
+    Image *shipVeryImage;
+
+    Image *cannonImage;
+    Image *rocketsImage;
+    Image *spaceGunImage;
+    Image *zapperImage;
+
+    GLuint backTexture;
+    GLuint logoTexture;
+    GLuint ship01Tex;
+
+    GLuint shipSlightTex;
+    GLuint shipMidTex;
+    GLuint shipVeryTex;
+
+    GLuint cannonTex;
+    GLuint rocketsTex;
+    GLuint spaceGunTex;
+    GLuint zapperTex;
+
+    int logoW, logoH;
+    float xc[2];
+    float yc[2];
 };
 
 class TitleAnim {
@@ -69,9 +132,30 @@ class Global {
 public:
         int xres, yres;
         Texture tex;
+
         TitleAnim title;
+
+        int mousex, mousey;
+
+        int spacePressed;
+        int currentWeapon;
+
+        int weaponFrame;
+        float weaponTimer;
+
+        int keys[256]; 
+
         Global() {
                 xres=640, yres=480;
+                mousex = xres/2;
+                mousey = yres/2;
+                spacePressed = 0;
+                currentWeapon = 0; // 0=cannon, 1=rockets, 2=spaceGun, 3=zapper
+
+                weaponFrame = 0;
+                weaponTimer = 0.0f;
+
+                memset(keys, 0, sizeof(keys)); // all keys = 0
         }
 } g;
 
@@ -185,6 +269,11 @@ void init_opengl(void)
         glClearColor(0.0, 0.0, 0.0, 1.0);
         glEnable(GL_TEXTURE_2D);
         initialize_fonts();
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         g.tex.backImage = &img[0];
         glGenTextures(1, &g.tex.backTexture);
         int w = g.tex.backImage->width;
@@ -192,12 +281,14 @@ void init_opengl(void)
         glBindTexture(GL_TEXTURE_2D, g.tex.backTexture);
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, 3, w, h, 0,
-                                        GL_RGB, GL_UNSIGNED_BYTE, g.tex.backImage->data);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                                        GL_RGBA, GL_UNSIGNED_BYTE, g.tex.backImage->data);
         g.tex.xc[0] = 0.0;
         g.tex.xc[1] = 1.0;
         g.tex.yc[0] = 0.0;
         g.tex.yc[1] = 1.0;
+
+
         Image *logo = &img[1];
         g.tex.logoW = logo->width;
         g.tex.logoH = logo->height;
@@ -205,14 +296,109 @@ void init_opengl(void)
         glBindTexture(GL_TEXTURE_2D, g.tex.logoTexture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        gluBuild2DMipmaps(GL_TEXTURE_2D, 3, logo->width, logo->height,
-                                        GL_RGB, GL_UNSIGNED_BYTE, logo->data);
+        gluBuild2DMipmaps(GL_TEXTURE_2D, 4, logo->width, logo->height,
+                                        GL_RGBA, GL_UNSIGNED_BYTE, logo->data);
+
+        // ship_full
+        g.tex.ship01Image = &img[2];
+        glGenTextures(1, &g.tex.ship01Tex);
+        w = g.tex.ship01Image->width;
+        h = g.tex.ship01Image->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                                        GL_RGBA, GL_UNSIGNED_BYTE, g.tex.ship01Image->data);
+
+        // ship_slight
+        g.tex.shipSlightImage = &img[3];
+        glGenTextures(1, &g.tex.shipSlightTex);
+        w = g.tex.shipSlightImage->width;
+        h = g.tex.shipSlightImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.shipSlightTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.shipSlightImage->data);
+
+        // ship_mid
+        g.tex.shipMidImage = &img[4];
+        glGenTextures(1, &g.tex.shipMidTex);
+        w = g.tex.shipMidImage->width;
+        h = g.tex.shipMidImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.shipMidTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.shipMidImage->data);
+
+        // ship_very
+        g.tex.shipVeryImage = &img[5];
+        glGenTextures(1, &g.tex.shipVeryTex);
+        w = g.tex.shipVeryImage->width;
+        h = g.tex.shipVeryImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.shipVeryTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.shipVeryImage->data);
+
+
+        // cannon
+        g.tex.cannonImage = &img[6];
+        glGenTextures(1, &g.tex.cannonTex);
+        w = g.tex.cannonImage->width;
+        h = g.tex.cannonImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.cannonTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.cannonImage->data);
+
+        // rockets
+        g.tex.rocketsImage = &img[7];
+        glGenTextures(1, &g.tex.rocketsTex);
+        w = g.tex.rocketsImage->width;
+        h = g.tex.rocketsImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.rocketsTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.rocketsImage->data);
+
+        // spaceGun
+        g.tex.spaceGunImage = &img[8];
+        glGenTextures(1, &g.tex.spaceGunTex);
+        w = g.tex.spaceGunImage->width;
+        h = g.tex.spaceGunImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.spaceGunTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.spaceGunImage->data);
+
+        // zapper
+        g.tex.zapperImage = &img[9];
+        glGenTextures(1, &g.tex.zapperTex);
+        w = g.tex.zapperImage->width;
+        h = g.tex.zapperImage->height;
+        glBindTexture(GL_TEXTURE_2D, g.tex.zapperTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, g.tex.zapperImage->data);
 }
 
 void check_mouse(XEvent *e)
 {
         static int savex = 0;
         static int savey = 0;
+
+        if (e->type == MotionNotify) {
+                g.mousex = e->xmotion.x;
+                g.mousey = g.yres - e->xmotion.y; 
+        }
+
         if (e->type == ButtonRelease) {
                 return;
         }
@@ -230,13 +416,45 @@ void check_mouse(XEvent *e)
 
 int check_keys(XEvent *e)
 {
-        if (e->type == KeyPress) {
-                int key = XLookupKeysym(&e->xkey, 0);
-                if (key == XK_Escape) {
-                        return 1;
-                }
-        }
+    if (e->type != KeyPress && e->type != KeyRelease)
         return 0;
+
+    int key = XLookupKeysym(&e->xkey, 0);
+
+    // space press/release
+    if (e->type == KeyPress)   g.keys[key] = 1;
+    if (e->type == KeyRelease) g.keys[key] = 0;
+
+    if (e->type == KeyPress) {
+        switch (key) {
+            case XK_Escape:
+                return 1; // exit 
+
+            case XK_space:
+                g.spacePressed = 1;
+                break;
+
+            case XK_s: // switch weapons
+                g.currentWeapon++;
+                if (g.currentWeapon > 3) 
+                    g.currentWeapon = 0;
+                g.weaponFrame = 0; 
+                g.weaponTimer = 0.0f;
+                break;
+
+        
+        }
+    }
+
+    if (e->type == KeyRelease) {
+        switch (key) {
+            case XK_space:
+                g.spacePressed = 0;
+                break;
+        }
+    }
+
+    return 0;
 }
 
 void title_physics(TitleAnim &t)
@@ -259,7 +477,8 @@ void title_render(const TitleAnim &t)
         float y0 = cy - h / 2.0f;
         float y1 = cy + h / 2.0f;
         glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        //glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
         glBindTexture(GL_TEXTURE_2D, g.tex.logoTexture);
         glColor3f(1.0f, 1.0f, 1.0f);
         glBegin(GL_QUADS);
@@ -271,15 +490,136 @@ void title_render(const TitleAnim &t)
         glDisable(GL_BLEND);
 }
 
-void physics()
+void physics() {
+
+    g.tex.yc[0] += 0.01;
+    g.tex.yc[1] += 0.01;
+
+    // weapon animation
+    if (g.spacePressed) {
+        g.weaponTimer += 0.2f;
+
+        if (g.weaponTimer >= 1.0f) {
+            g.weaponTimer = 0.0f;
+            g.weaponFrame++;
+
+            // max frames based on weapon
+            int maxFrames;
+            switch (g.currentWeapon) {
+                case 0: maxFrames = 7; break;    // cannon
+                case 1: maxFrames = 16; break;   // rockets
+                case 2: maxFrames = 12; break;   // spaceGun
+                case 3: maxFrames = 14; break;   // zapper
+               // default: maxFrames = 7; break;
+            }
+
+            if (g.weaponFrame >= maxFrames)
+                g.weaponFrame = 1; 
+        }
+    } else {
+        g.weaponFrame = 0; // idle frame
+    }
+
+    title_physics(g.title);
+}
+
+void renderWeapon(int type)
 {
-        g.tex.yc[0] += 0.001;
-        g.tex.yc[1] += 0.001;
-        title_physics(g.title);
+    //float w = 40;
+    //float h = 40;
+
+    float x = g.mousex;
+    float y = g.mousey + 40; 
+
+   if (g.spacePressed || g.weaponFrame == 0) {
+
+        GLuint tex;
+
+        if (g.currentWeapon == 0) tex = g.tex.cannonTex;
+        else if (g.currentWeapon == 1) tex = g.tex.rocketsTex;
+        else if (g.currentWeapon == 2) tex = g.tex.spaceGunTex;
+        else tex = g.tex.zapperTex;
+
+        float ww = 60;
+        float hh = 60;
+
+        // sprite sheet math
+        float frameWidth;
+        switch (g.currentWeapon) {
+            case 0: frameWidth = 1.0f / 7.0f; break;
+            case 1: frameWidth = 1.0f / 16.0f; break;
+            case 2: frameWidth = 1.0f / 12.0f; break;
+            case 3: frameWidth = 1.0f / 14.0f; break;
+            default: frameWidth = 1.0f / 7.0f; break;
+        }
+
+        float tx0 = frameWidth * g.weaponFrame;
+        float tx1 = tx0 + frameWidth;
+
+        glBindTexture(GL_TEXTURE_2D, tex);
+
+        glBegin(GL_QUADS);
+            glTexCoord2f(tx0, 1); glVertex2f(x - ww/2, y - hh/2);
+            glTexCoord2f(tx0, 0); glVertex2f(x - ww/2, y + hh/2);
+            glTexCoord2f(tx1, 0); glVertex2f(x + ww/2, y + hh/2);
+            glTexCoord2f(tx1, 1); glVertex2f(x + ww/2, y - hh/2);
+        glEnd();
+    }
+}
+
+void renderShip()
+{
+    float w = 60;
+    float h = 60;
+
+    float x = g.mousex;
+    float y = g.mousey;
+
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.0f);
+
+    glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
+
+    glBegin(GL_QUADS);
+        glTexCoord2f(0,1); glVertex2f(x - w/2, y - h/2);
+        glTexCoord2f(0,0); glVertex2f(x - w/2, y + h/2);
+        glTexCoord2f(1,0); glVertex2f(x + w/2, y + h/2);
+        glTexCoord2f(1,1); glVertex2f(x + w/2, y - h/2);
+    glEnd();
+
+    if (g.spacePressed || g.weaponFrame == 0) {
+
+        GLuint tex;
+
+        if (g.currentWeapon == 0) tex = g.tex.cannonTex;
+        else if (g.currentWeapon == 1) tex = g.tex.rocketsTex;
+        else if (g.currentWeapon == 2) tex = g.tex.spaceGunTex;
+        else tex = g.tex.zapperTex;
+
+        float ww = 40;
+        float hh = 40;
+
+        float frameWidth = 1.0f / 7.0f;
+        float tx0 = frameWidth * g.weaponFrame;
+        float tx1 = tx0 + frameWidth;
+
+        glBindTexture(GL_TEXTURE_2D, tex);
+
+        glBegin(GL_QUADS);
+            glTexCoord2f(tx0, 1); glVertex2f(x - ww/2, y - hh/2);
+            glTexCoord2f(tx0, 0); glVertex2f(x - ww/2, y + hh/2);
+            glTexCoord2f(tx1, 0); glVertex2f(x + ww/2, y + hh/2);
+            glTexCoord2f(tx1, 1); glVertex2f(x + ww/2, y - hh/2);
+        glEnd();
+    }
+
+    glDisable(GL_ALPHA_TEST);
 }
 
 void render()
 {
+
+        
         glClear(GL_COLOR_BUFFER_BIT);
         glColor3f(1.0, 1.0, 1.0);
         glBindTexture(GL_TEXTURE_2D, g.tex.backTexture);
@@ -289,5 +629,15 @@ void render()
                 glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres, g.yres);
                 glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres, 0);
         glEnd();
+
         title_render(g.title);
+
+        renderShip();
+
+       // g.currentWeapon = 1;
+       // if (g.spacePressed) 
+        //    renderWeapon(g.currentWeapon);
+        
+
+       // title_render(g.title);
 }
