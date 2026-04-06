@@ -87,7 +87,12 @@ Image img[] = {
     "./weapons/cannon.png",
     "./weapons/rockets.png",
     "./weapons/spaceGun.png",
-    "./weapons/zapper.png"
+    "./weapons/zapper.png",
+
+    "./bullets/weapons_cannon.png",
+    "./bullets/weapons_rocket.png",
+    "./bullets/weapons_spaceGun.png",
+    "./bullets/weapons_zapper.png"
 };
 
 class Texture {
@@ -104,6 +109,11 @@ public:
     Image *spaceGunImage;
     Image *zapperImage;
 
+    Image *bulletCannonImage;
+    Image *bulletRocketImage;
+    Image *bulletSpaceGunImage;
+    Image *bulletZapperImage;
+
     GLuint backTexture;
     GLuint logoTexture;
     GLuint ship01Tex;
@@ -117,9 +127,23 @@ public:
     GLuint spaceGunTex;
     GLuint zapperTex;
 
+    GLuint bulletCannonTex;
+    GLuint bulletRocketTex;
+    GLuint bulletSpaceGunTex;
+    GLuint bulletZapperTex;
+
     int logoW, logoH;
     float xc[2];
     float yc[2];
+};
+
+struct Bullet {
+    float x, y;
+    float vel;
+    int active;
+    int type; // 
+    int frame;
+    float frameTimer;
 };
 
 class TitleAnim {
@@ -145,17 +169,24 @@ public:
 
         int keys[256]; 
 
+        Bullet bullets[30];
+
         Global() {
                 xres=640, yres=480;
                 mousex = xres/2;
                 mousey = yres/2;
                 spacePressed = 0;
-                currentWeapon = 0; // 0=cannon, 1=rockets, 2=spaceGun, 3=zapper
+                currentWeapon = 2; // 0=cannon, 1=rockets, 2=spaceGun, 3=zapper
 
                 weaponFrame = 0;
                 weaponTimer = 0.0f;
 
                 memset(keys, 0, sizeof(keys)); // all keys = 0
+
+                for (int i=0; i<30; i++) {
+
+                        bullets[i].active = 0;
+                }
         }
 } g;
 
@@ -387,6 +418,54 @@ void init_opengl(void)
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
         glTexImage2D(GL_TEXTURE_2D, 0, 4, w, h, 0,
                 GL_RGBA, GL_UNSIGNED_BYTE, g.tex.zapperImage->data);
+
+        // cannon bullet
+        g.tex.bulletCannonImage = &img[10];
+        glGenTextures(1, &g.tex.bulletCannonTex);
+        glBindTexture(GL_TEXTURE_2D, g.tex.bulletCannonTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4,
+            g.tex.bulletCannonImage->width,
+            g.tex.bulletCannonImage->height,
+            0, GL_RGBA, GL_UNSIGNED_BYTE,
+            g.tex.bulletCannonImage->data);
+
+        // rocket bullet
+        g.tex.bulletRocketImage = &img[11];
+        glGenTextures(1, &g.tex.bulletRocketTex);
+        glBindTexture(GL_TEXTURE_2D, g.tex.bulletRocketTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4,
+            g.tex.bulletRocketImage->width,
+            g.tex.bulletRocketImage->height,
+            0, GL_RGBA, GL_UNSIGNED_BYTE,
+            g.tex.bulletRocketImage->data);
+        
+        // spaceGun bullet
+        g.tex.bulletSpaceGunImage = &img[12];
+        glGenTextures(1, &g.tex.bulletSpaceGunTex);
+        glBindTexture(GL_TEXTURE_2D, g.tex.bulletSpaceGunTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4,
+            g.tex.bulletSpaceGunImage->width,
+            g.tex.bulletSpaceGunImage->height,
+            0, GL_RGBA, GL_UNSIGNED_BYTE,
+            g.tex.bulletSpaceGunImage->data);
+        
+        // zapper bullet
+        g.tex.bulletZapperImage = &img[13];
+        glGenTextures(1, &g.tex.bulletZapperTex);
+        glBindTexture(GL_TEXTURE_2D, g.tex.bulletZapperTex);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, 4,
+            g.tex.bulletZapperImage->width,
+            g.tex.bulletZapperImage->height,
+            0, GL_RGBA, GL_UNSIGNED_BYTE,
+            g.tex.bulletZapperImage->data);
 }
 
 void check_mouse(XEvent *e)
@@ -460,7 +539,7 @@ int check_keys(XEvent *e)
 void title_physics(TitleAnim &t)
 {
         if (t.timer < 1.0f)
-                t.timer += 0.008f;
+                t.timer += 0.01f;
 }
 
 void title_render(const TitleAnim &t)
@@ -490,6 +569,7 @@ void title_render(const TitleAnim &t)
         glDisable(GL_BLEND);
 }
 
+
 void physics() {
 
     g.tex.yc[0] += 0.01;
@@ -497,30 +577,198 @@ void physics() {
 
     // weapon animation
     if (g.spacePressed) {
+
         g.weaponTimer += 0.2f;
 
+        int maxFrames;
+        switch (g.currentWeapon) {
+            case 0: maxFrames = 7;  break;
+            case 1: maxFrames = 16; break;
+            case 2: maxFrames = 12; break;
+            case 3: maxFrames = 14; break;
+            default: maxFrames = 7; break;
+        }
+
         if (g.weaponTimer >= 1.0f) {
+
             g.weaponTimer = 0.0f;
             g.weaponFrame++;
-
-            // max frames based on weapon
-            int maxFrames;
-            switch (g.currentWeapon) {
-                case 0: maxFrames = 7; break;    // cannon
-                case 1: maxFrames = 16; break;   // rockets
-                case 2: maxFrames = 12; break;   // spaceGun
-                case 3: maxFrames = 14; break;   // zapper
-               // default: maxFrames = 7; break;
-            }
-
-            if (g.weaponFrame >= maxFrames)
-                g.weaponFrame = 1; 
+            if (g.weaponFrame >= maxFrames) g.weaponFrame = 1;
         }
     } else {
-        g.weaponFrame = 0; // idle frame
+
+        g.weaponFrame = 0;
     }
 
-    title_physics(g.title);
+    // fire bullets
+    static float fireCooldown = 0.0f;
+    float fireRate;
+    switch (g.currentWeapon) {
+
+        case 0: fireRate = 0.3f; break;
+        case 1: fireRate = 0.5f; break;
+        case 2: fireRate = 0.1f; break;
+        case 3: fireRate = 0.2f; break;
+        default: fireRate = 0.3f; break;
+    }
+
+    if (g.spacePressed) {
+        fireCooldown += 0.016f; 
+        if (fireCooldown >= fireRate) {
+
+            for (int i = 0; i < 30; i++) {
+
+                if (!g.bullets[i].active) {
+
+                    g.bullets[i].active = 1;
+                    g.bullets[i].x = g.mousex;
+                    g.bullets[i].y = g.mousey + 20;
+                    g.bullets[i].type = g.currentWeapon;
+                    g.bullets[i].frame = 0;
+                    g.bullets[i].frameTimer = 0.0f;
+
+                    switch (g.currentWeapon) {
+
+                        case 0: g.bullets[i].vel = 12.0f; break;
+                        case 1: g.bullets[i].vel = 8.0f;  break;
+                        case 2: g.bullets[i].vel = 15.0f; break;
+                        case 3: g.bullets[i].vel = 18.0f; break;
+                        default: g.bullets[i].vel = 10.0f; break;
+                    }
+                    break;
+                }
+            }
+            fireCooldown = 0.0f;
+        }
+    } else {
+
+        fireCooldown = fireRate;
+    }
+
+    // update bullets
+    for (int i = 0; i < 30; i++) {
+
+        if (g.bullets[i].active) {
+
+            g.bullets[i].y += g.bullets[i].vel;
+
+            if (g.bullets[i].y > g.yres) {
+
+                g.bullets[i].active = 0;
+                continue;
+            }
+
+            g.bullets[i].frameTimer += 0.2f;
+
+            int maxFrames;
+            switch (g.bullets[i].type) {
+
+                case 0: maxFrames = 4; break;
+                case 1: maxFrames = 3; break;
+                case 2: maxFrames = 10; break;
+                case 3: maxFrames = 8; break;
+                default: maxFrames = 4; break;
+            }
+
+            if (g.bullets[i].frameTimer >= 1.0f) {
+
+                g.bullets[i].frameTimer = 0.0f;
+                g.bullets[i].frame++;
+                if (g.bullets[i].frame >= maxFrames) g.bullets[i].frame = 0;
+            }
+        }
+    }
+
+   // title_physics(g.title);
+}
+
+void renderBullets() {
+
+    glEnable(GL_ALPHA_TEST);
+   // glAlphaFunc(GL_GREATER, 0.0f);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    for (int i = 0; i < 30; i++) {
+
+        if (!g.bullets[i].active) continue;
+
+        GLuint tex;
+        float frameWidth;
+
+        // choose texture based on bullet type
+        switch (g.bullets[i].type) {
+
+            case 0:
+                tex = g.tex.bulletCannonTex;
+                frameWidth = 1.0f / 4.0f;
+                break;
+            case 1:
+                tex = g.tex.bulletRocketTex;
+                frameWidth = 1.0f / 3.0f;
+                break;
+            case 2:
+                tex = g.tex.bulletSpaceGunTex;
+                frameWidth = 1.0f / 10.0f;
+                break;
+            case 3:
+                tex = g.tex.bulletZapperTex;
+                frameWidth = 1.0f / 8.0f;
+                break;
+            default:
+                tex = g.tex.bulletCannonTex;
+                frameWidth = 1.0f / 4.0f;
+                break;
+        }
+
+        float tx0 = frameWidth * g.bullets[i].frame;
+        float tx1 = tx0 + frameWidth;
+
+        float x = g.bullets[i].x;
+        float y = g.bullets[i].y;
+
+        float w = 20;
+        float h = 20;
+
+        int rocketSplit = 60/4;
+        float zapperLen = 100;
+
+        glBindTexture(GL_TEXTURE_2D, tex);
+
+        if (g.bullets[i].type == 1) {
+
+            
+          //  for (int x = 0; x < 4; x ++) {
+
+                glBegin(GL_QUADS);
+                    glTexCoord2f(tx0, 1); glVertex2f(x-w, y-h);
+                    glTexCoord2f(tx0, 0); glVertex2f(x-w, y+h);
+                    glTexCoord2f(tx1, 0); glVertex2f(x+w, y+h);
+                    glTexCoord2f(tx1, 1); glVertex2f(x+w, y-h);
+                glEnd();
+           // }
+        }
+        else if(g.bullets[i].type == 3) {
+
+                glBegin(GL_QUADS);
+                    glTexCoord2f(tx0, 1); glVertex2f(x-w, y-h);
+                    glTexCoord2f(tx0, 0); glVertex2f(x-w, y+h);
+                    glTexCoord2f(tx1, 0); glVertex2f(x+w, y+h);
+                    glTexCoord2f(tx1, 1); glVertex2f(x+w, y-h);
+                glEnd();
+        }
+        else{ 
+
+        glBegin(GL_QUADS);
+            glTexCoord2f(tx0, 1); glVertex2f(x-w, y-h);
+            glTexCoord2f(tx0, 0); glVertex2f(x-w, y+h);
+            glTexCoord2f(tx1, 0); glVertex2f(x+w, y+h);
+            glTexCoord2f(tx1, 1); glVertex2f(x+w, y-h);
+        glEnd();
+        }
+    }
+
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_BLEND);
 }
 
 void renderWeapon(int type)
@@ -546,6 +794,7 @@ void renderWeapon(int type)
         // sprite sheet math
         float frameWidth;
         switch (g.currentWeapon) {
+
             case 0: frameWidth = 1.0f / 7.0f; break;
             case 1: frameWidth = 1.0f / 16.0f; break;
             case 2: frameWidth = 1.0f / 12.0f; break;
@@ -599,7 +848,17 @@ void renderShip()
         float ww = 40;
         float hh = 40;
 
-        float frameWidth = 1.0f / 7.0f;
+        float frameWidth;
+
+        switch (g.currentWeapon) {
+
+            case 0: frameWidth = 1.0f / 7.0f; break;
+            case 1: frameWidth = 1.0f / 16.0f; break;
+            case 2: frameWidth = 1.0f / 12.0f; break;
+            case 3: frameWidth = 1.0f / 14.0f; break;
+            default: frameWidth = 1.0f / 7.0f; break;
+        }
+
         float tx0 = frameWidth * g.weaponFrame;
         float tx1 = tx0 + frameWidth;
 
@@ -633,10 +892,11 @@ void render()
         title_render(g.title);
 
         renderShip();
+        renderBullets();
 
        // g.currentWeapon = 1;
        // if (g.spacePressed) 
-        //    renderWeapon(g.currentWeapon);
+
         
 
        // title_render(g.title);
