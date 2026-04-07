@@ -24,13 +24,14 @@ struct GameState {
     WeaponState weapon;
 };
 
-extern void f_physics(GameState &g);
-extern void updateBullets(GameState &g);
-extern void fireBullets(GameState &g);
-extern void updateWeapon(GameState &g);
+//extern void f_physics(GameState &g);
+//extern void updateBullets(GameState &g);
+//extern void fireBullets(GameState &g);
+//extern void updateWeapon(GameState &g);
 
 // weapon animation
 void updateWeapon(GameState &g) {
+
     if (g.spacePressed) {
         g.weapon.weaponTimer += 0.2f;
 
@@ -102,11 +103,15 @@ void fireBullets(GameState &g) {
 
 // update bullets
 void updateBullets(GameState &g) {
+
     for (int i = 0; i < 30; i++) {
+
         if (g.bullets[i].active) {
+
             g.bullets[i].y += g.bullets[i].vel;
 
             if (g.bullets[i].y > g.yres) {
+
                 g.bullets[i].active = false;
                 continue;
             }
@@ -115,6 +120,7 @@ void updateBullets(GameState &g) {
 
             int maxFrames;
             switch (g.bullets[i].type) {
+
                 case 0: maxFrames = 4; break;
                 case 1: maxFrames = 3; break;
                 case 2: maxFrames = 10; break;
@@ -123,6 +129,7 @@ void updateBullets(GameState &g) {
             }
 
             if (g.bullets[i].frameTimer >= 1.0f) {
+                
                 g.bullets[i].frameTimer = 0.0f;
                 g.bullets[i].frame++;
                 if (g.bullets[i].frame >= maxFrames) g.bullets[i].frame = 0;
