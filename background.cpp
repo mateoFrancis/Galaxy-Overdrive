@@ -139,11 +139,14 @@ public:
 
 struct Bullet {
     float x, y;
-    float vel;
+    float xVel, yVel;   // velocity vector
+    float vel;          // speed magnitude
     int active;
-    int type; // 
+    int type;           // weapon type
     int frame;
     float frameTimer;
+    float angle;
+
 };
 
 class TitleAnim {
@@ -167,6 +170,10 @@ public:
         int weaponFrame;
         float weaponTimer;
 
+        float shipx, shipy;
+        float ShipSpeed;
+        float shipAngle;
+
         int keys[256]; 
 
         Bullet bullets[30];
@@ -176,10 +183,15 @@ public:
                 mousex = xres/2;
                 mousey = yres/2;
                 spacePressed = 0;
-                currentWeapon = 1; // 0=cannon, 1=rockets, 2=spaceGun, 3=zapper
+                currentWeapon = 0; // 0=cannon, 1=rockets, 2=spaceGun, 3=zapper
 
                 weaponFrame = 0;
                 weaponTimer = 0.0f;
+
+                shipx = xres / 2;
+                shipy = yres / 3;
+                shipAngle = 0.0f;
+                ShipSpeed = 6.0f;
 
                 memset(keys, 0, sizeof(keys)); // all keys = 0
 
@@ -303,7 +315,7 @@ void init_opengl(void)
 
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         g.tex.backImage = &img[0];
         glGenTextures(1, &g.tex.backTexture);
@@ -500,37 +512,37 @@ int check_keys(XEvent *e)
 
     int key = XLookupKeysym(&e->xkey, 0);
 
-    // space press/release
-    if (e->type == KeyPress)   g.keys[key] = 1;
-    if (e->type == KeyRelease) g.keys[key] = 0;
+    if (e->type == KeyPress)
+        g.keys[key] = 1;
+    else
+        g.keys[key] = 0;
 
     if (e->type == KeyPress) {
         switch (key) {
             case XK_Escape:
-                return 1; // exit 
+                return 1;
+            
+            case XK_equal:
+                g.ShipSpeed += g.ShipSpeed;
+                break;
 
             case XK_space:
                 g.spacePressed = 1;
                 break;
 
-            case XK_s: // switch weapons
+            case XK_s:
                 g.currentWeapon++;
-                if (g.currentWeapon > 3) 
+                if (g.currentWeapon > 3)
                     g.currentWeapon = 0;
-                g.weaponFrame = 0; 
+                g.weaponFrame = 0;
                 g.weaponTimer = 0.0f;
                 break;
-
-        
         }
     }
 
     if (e->type == KeyRelease) {
-        switch (key) {
-            case XK_space:
-                g.spacePressed = 0;
-                break;
-        }
+        if (key == XK_space)
+            g.spacePressed = 0;
     }
 
     return 0;
@@ -556,7 +568,7 @@ void title_render(const TitleAnim &t)
         float y0 = cy - h / 2.0f;
         float y1 = cy + h / 2.0f;
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         //glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
         glBindTexture(GL_TEXTURE_2D, g.tex.logoTexture);
         glColor3f(1.0f, 1.0f, 1.0f);
@@ -569,147 +581,216 @@ void title_render(const TitleAnim &t)
         glDisable(GL_BLEND);
 }
 
+const float FRAME_TIME = 0.16f;
 
-void physics() {
+// fire cooldown in seconds
+float FIRE_COOLDOWN = 1.5f;  // fire rate (lower = faster)
 
+// animation speed multiplier (to match fire rate)
+float ANIM_SPEED_MULTIPLIER = 5.0f; 
+
+// zapper animation speed
+float ZAPPER_ANIM_SPEED = 0.0f;
+
+// max bullets
+int MAX_BULLETS = 50;  // numbr of bullets
+
+
+void physics()
+{
     g.tex.yc[0] += 0.01;
     g.tex.yc[1] += 0.01;
 
-    // weapon animation
-    if (g.spacePressed) {
-        g.weaponTimer += 0.02f;
+    // ship movement (with rotation)
+    float rad = g.shipAngle * M_PI / 180.0f;
+    float cosA = cos(rad);
+    float sinA = sin(rad);
+    float moveSpeed = g.ShipSpeed;
 
-        int maxFrames;
-        switch (g.currentWeapon) {
-            case 0: maxFrames = 7;  break;
-            case 1: maxFrames = 16; break;
-            case 2: maxFrames = 12; break;
-            case 3: maxFrames = 14; break;
-            default: maxFrames = 7; break;
-        }
+    float dx = 0.0f, dy = 0.0f;
 
-        if (g.weaponTimer >= 1.0f) {
+    if (g.keys[XK_w]) { 
+
+        dx += cosA * moveSpeed;
+        dy += sinA * moveSpeed; 
+    }
+
+    if (g.keys[XK_a]) {
+        
+        dx -= sinA * moveSpeed;
+        dy += cosA * moveSpeed; 
+    }
+    if (g.keys[XK_d]) {
+        
+        dx += sinA * moveSpeed;
+        dy -= cosA * moveSpeed; 
+    }
+
+    g.shipx += dx;
+    g.shipy += dy;
+
+    if (g.shipx < 0) 
+        g.shipx = 0;
+
+    if (g.shipx > g.xres) 
+        g.shipx = g.xres;
+
+    if (g.shipy < 0) 
+        g.shipy = 0;
+
+    if (g.shipy > g.yres) 
+        g.shipy = g.yres;
+
+    // Aim at mouse
+    float mx = g.mousex - g.shipx;
+    float my = g.mousey - g.shipy;
+
+    g.shipAngle = atan2(my, mx) * 180.0f / M_PI;
+
+    // for weapon animation
+    g.weaponTimer += FRAME_TIME;
+
+    int maxFrames = (g.currentWeapon == 0) ? 7 :
+                    (g.currentWeapon == 1) ? 16 :
+                    (g.currentWeapon == 2) ? 12 : 14;
+
+    // bullets fired
+    if (g.spacePressed && g.currentWeapon != 3) {
+        if (g.weaponTimer > FIRE_COOLDOWN) {  // global fire rate
             g.weaponTimer = 0.0f;
-            g.weaponFrame++;
-            if (g.weaponFrame >= maxFrames) g.weaponFrame = 1;
-        }
-    } else {
-        g.weaponFrame = 0;
-    }
 
-    // fire bullets
-    static float fireCooldown = 0.0f;
-    float fireRate;
+            for (int i = 0; i < MAX_BULLETS; i++) {
 
-    switch (g.currentWeapon) {
-        //case 0: fireRate = 0.5f; break;
-        //case 1: fireRate = 0.5f; break;
-        //case 2: fireRate = 0.5f; break;
-        case 3: fireRate = 0.05f; break; // zapper faster check
-        default: fireRate = 2.0f; break;
-    }
+                if (!g.bullets[i].active) {
 
-    if (g.spacePressed) {
+                    g.bullets[i].active = 1;
+                    g.bullets[i].type = g.currentWeapon;
+                    g.bullets[i].x = g.shipx;
+                    g.bullets[i].y = g.shipy;
+                    g.bullets[i].vel = 10.0f;
+                    g.bullets[i].frame = 0;
+                    g.bullets[i].frameTimer = 0.0f; // reset timer
+                    g.bullets[i].angle = g.shipAngle;
 
-        fireCooldown += 0.16f;
+                    float radb = g.shipAngle * M_PI / 180.0f;
 
-        //  if (fireCooldown > fireRate)
-          //      fireCooldown = fireRate;
-
-        // zapper 
-        if (g.currentWeapon == 3) {
-
-            bool found = false;
-
-            for (int i = 0; i < 30; i++) {
-                if (g.bullets[i].active && g.bullets[i].type == 3) {
-
-                    // keep beam next to ship
-                    g.bullets[i].x = g.mousex;
-                    g.bullets[i].y = g.mousey + 20;
-                    found = true;
+                    g.bullets[i].xVel = cos(radb) * g.bullets[i].vel;
+                    g.bullets[i].yVel = sin(radb) * g.bullets[i].vel;
                     break;
                 }
             }
 
-            if (!found) {
-                for (int i = 0; i < 30; i++) {
+            // move weapon animation (relative to fire rate)
+            g.weaponFrame += ANIM_SPEED_MULTIPLIER;
+            if (g.weaponFrame >= maxFrames)
+                g.weaponFrame = 1;
+        }
+    } else if (g.currentWeapon != 3) {
+
+        g.weaponFrame = 0;
+    }
+
+    // zapper on
+    if (g.currentWeapon == 3) {
+
+        if (g.spacePressed) {
+
+            bool zapActive = false;
+
+            for (int i = 0; i < MAX_BULLETS; i++) {
+
+                if (g.bullets[i].active && g.bullets[i].type == 3) {
+                    
+                    zapActive = true;
+                    break;
+                }
+            }
+            if (!zapActive) {
+
+                for (int i = 0; i < MAX_BULLETS; i++) {
+
                     if (!g.bullets[i].active) {
+
                         g.bullets[i].active = 1;
                         g.bullets[i].type = 3;
-                        g.bullets[i].x = g.mousex;
-                        g.bullets[i].y = g.mousey + 20;
+                        g.bullets[i].x = g.shipx;
+                        g.bullets[i].y = g.shipy;
+                        g.bullets[i].angle = g.shipAngle;
                         g.bullets[i].frame = 0;
                         g.bullets[i].frameTimer = 0.0f;
+                        g.bullets[i].xVel = 0.0f;
+                        g.bullets[i].yVel = 0.0f;
                         break;
                     }
                 }
             }
-        }
 
-        // weapons
-        else if (fireCooldown >= fireRate) {
+            // zapper animation
+            g.weaponFrame++;
 
-            for (int i = 0; i < 30; i++) {
-                if (!g.bullets[i].active) {
-                    g.bullets[i].active = 1;
-                    g.bullets[i].x = g.mousex;
-                    g.bullets[i].y = g.mousey + 20;
-                    g.bullets[i].type = g.currentWeapon;
-                    g.bullets[i].frame = 0;
-                    g.bullets[i].frameTimer = 0.0f;
+            if (g.weaponFrame >= maxFrames) 
+                g.weaponFrame = 1;
 
-                    switch (g.currentWeapon) {
-                        case 0: g.bullets[i].vel = 12.0f; break;
-                        case 1: g.bullets[i].vel = 8.0f;  break;
-                        case 2: g.bullets[i].vel = 15.0f; break;
-                        default: g.bullets[i].vel = 10.0f; break;
-                    }
-                    break;
-                }
+        } else {
+
+            // turn off zapper
+            for (int i = 0; i < MAX_BULLETS; i++) {
+
+                if (g.bullets[i].type == 3)
+                    g.bullets[i].active = 0;
             }
-            fireCooldown = 0.0f;
+            g.weaponFrame = 0;
         }
     }
 
-    // release zapper when space is released
-    if (!g.spacePressed) {
-        for (int i = 0; i < 30; i++) {
-            if (g.bullets[i].type == 3) {
-                g.bullets[i].active = 0;
-            }
-        }
-    }
+    // update bullets and animate frames seperately
+    for (int i = 0; i < MAX_BULLETS; i++) {
 
-    // update bullets
-    for (int i = 0; i < 30; i++) {
-        if (!g.bullets[i].active) continue;
-
-        
-        if (g.bullets[i].type != 3) {
-            g.bullets[i].y += g.bullets[i].vel;
-        }
-
-        if (g.bullets[i].y > g.yres) {
-            g.bullets[i].active = 0;
+        if (!g.bullets[i].active)
             continue;
+
+        g.bullets[i].x += g.bullets[i].xVel;
+        g.bullets[i].y += g.bullets[i].yVel;
+
+        // deactivate if off screen
+        if (g.bullets[i].type != 3 &&
+            (g.bullets[i].x < 0 || 
+             g.bullets[i].x > g.xres ||
+             g.bullets[i].y < 0 || 
+             g.bullets[i].y > g.yres)) {
+
+            g.bullets[i].active = 0;
         }
 
-        g.bullets[i].frameTimer += 0.02f;
+        g.bullets[i].frameTimer += FRAME_TIME;
 
-        int maxFrames;
+        float bulletAnimInterval;
         switch (g.bullets[i].type) {
-            case 0: maxFrames = 4; break;
-            case 1: maxFrames = 3; break;
-            case 2: maxFrames = 10; break;
-            case 3: maxFrames = 8; break;
-            default: maxFrames = 4; break;
+
+            case 0: bulletAnimInterval = 0.1f; // cannon
+                    break;  
+            case 1: bulletAnimInterval = 0.08f; // rocket
+                     break; 
+            case 2: bulletAnimInterval = 0.05f; // spaceGun
+                     break; 
+            case 3: bulletAnimInterval = 0.07f; // zapper
+                    break; 
+            default: bulletAnimInterval = 0.1f; 
+                    break;
         }
 
-        if (g.bullets[i].frameTimer >= 0.1f) {
-            g.bullets[i].frameTimer = 0.01f;
+        if (g.bullets[i].frameTimer > bulletAnimInterval) {
+
+            g.bullets[i].frameTimer = 0.0f;
             g.bullets[i].frame++;
-            if (g.bullets[i].frame >= maxFrames) g.bullets[i].frame = 0;
+
+            int bulletMaxFrames = (g.bullets[i].type == 0) ? 4 :
+                                  (g.bullets[i].type == 1) ? 3 :
+                                  (g.bullets[i].type == 2) ? 10 :
+                                  8;  // zapper
+
+            if (g.bullets[i].frame >= bulletMaxFrames) 
+                g.bullets[i].frame = 0;
         }
     }
 
@@ -717,10 +798,11 @@ void physics() {
 }
 
 
-void renderBullets() {
 
+void renderBullets()
+{
     glEnable(GL_ALPHA_TEST);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     for (int i = 0; i < 30; i++) {
 
@@ -730,16 +812,21 @@ void renderBullets() {
         float frameWidth;
 
         switch (g.bullets[i].type) {
-            case 0: tex = g.tex.bulletCannonTex; frameWidth = 1.0f / 4.0f;
-                break;
-            case 1: tex = g.tex.bulletRocketTex; frameWidth = 1.0f / 3.0f;
-                 break;
-            case 2: tex = g.tex.bulletSpaceGunTex; frameWidth = 1.0f / 10.0f;
-                 break;
-            case 3: tex = g.tex.bulletZapperTex; frameWidth = 1.0f / 8.0f;
-                 break;
-            default: tex = g.tex.bulletCannonTex; frameWidth = 1.0f / 4.0f;
-                 break;
+
+            case 0: tex = g.tex.bulletCannonTex;
+                    frameWidth = 1.0f/4.0f;
+                     break;
+            case 1: tex = g.tex.bulletRocketTex;
+                     frameWidth = 1.0f/3.0f;
+                      break;
+            case 2: tex = g.tex.bulletSpaceGunTex; 
+                    frameWidth = 1.0f/10.0f;
+                     break;
+            case 3: tex = g.tex.bulletZapperTex; 
+                    frameWidth = 1.0f/8.0f; 
+                    break;
+            default: tex = g.tex.bulletCannonTex; frameWidth = 1.0f/4.0f; 
+                    break;
         }
 
         float tx0 = frameWidth * g.bullets[i].frame;
@@ -753,45 +840,64 @@ void renderBullets() {
 
         glBindTexture(GL_TEXTURE_2D, tex);
 
-        // rockets
+        // rockets rotated
         if (g.bullets[i].type == 1) {
+
+            glPushMatrix();
+            glTranslatef(x, y, 0.0f);
+            glRotatef(g.bullets[i].angle - 90.0f, 0,0,1);
 
             float spacing = 10.0f;
 
-            // centered offsets: -1.5, -0.5, 0.5, 1.5
             for (int j = 0; j < 4; j++) {
-                float offsetX = (j - 1.5f) * spacing;
+
+                float offset = (j - 1.5f) * spacing;
 
                 glBegin(GL_QUADS);
-                    glTexCoord2f(tx0, 1); glVertex2f(x + offsetX - w, y - h - 15);
-                    glTexCoord2f(tx0, 0); glVertex2f(x + offsetX - w, y + h);
-                    glTexCoord2f(tx1, 0); glVertex2f(x + offsetX + w, y + h);
-                    glTexCoord2f(tx1, 1); glVertex2f(x + offsetX + w, y - h - 15);
+                    glTexCoord2f(tx0,1); glVertex2f(offset-w, -h-15);
+                    glTexCoord2f(tx0,0); glVertex2f(offset-w,  h);
+                    glTexCoord2f(tx1,0); glVertex2f(offset+w,  h);
+                    glTexCoord2f(tx1,1); glVertex2f(offset+w, -h-15);
                 glEnd();
             }
+
+            glPopMatrix();
         }
 
-        // zapper
+        // zapper rotation
         else if (g.bullets[i].type == 3) {
 
-            float beamWidth = 40.0f;
+            glPushMatrix();
+            glTranslatef(g.shipx, g.shipy, 0.0f);
+            glRotatef(g.shipAngle - 90.0f, 0,0,1);
+
+            float beamLength = g.yres;
+            float beamWidth  = 40.0f;
 
             glBegin(GL_QUADS);
-                glTexCoord2f(tx0, 1); glVertex2f(x - beamWidth/2, y - 20);    // start at ship
-                glTexCoord2f(tx0, 0); glVertex2f(x - beamWidth/2, g.yres);   // go up only
-                glTexCoord2f(tx1, 0); glVertex2f(x + beamWidth/2, g.yres);
-                glTexCoord2f(tx1, 1); glVertex2f(x + beamWidth/2, y - 20);
+                glTexCoord2f(tx0,1); glVertex2f(-beamWidth/2, 0);
+                glTexCoord2f(tx0,0); glVertex2f(-beamWidth/2, beamLength);
+                glTexCoord2f(tx1,0); glVertex2f( beamWidth/2, beamLength);
+                glTexCoord2f(tx1,1); glVertex2f( beamWidth/2, 0);
             glEnd();
+
+            glPopMatrix();
         }
 
         // normal bullets
         else {
+            glPushMatrix();
+            glTranslatef(x, y, 0.0f);
+            glRotatef(g.bullets[i].angle - 90.0f, 0,0,1);
+
             glBegin(GL_QUADS);
-                glTexCoord2f(tx0, 1); glVertex2f(x-w, y-h);
-                glTexCoord2f(tx0, 0); glVertex2f(x-w, y+h);
-                glTexCoord2f(tx1, 0); glVertex2f(x+w, y+h);
-                glTexCoord2f(tx1, 1); glVertex2f(x+w, y-h);
+                glTexCoord2f(tx0,1); glVertex2f(-w, -h);
+                glTexCoord2f(tx0,0); glVertex2f(-w,  h);
+                glTexCoord2f(tx1,0); glVertex2f( w,  h);
+                glTexCoord2f(tx1,1); glVertex2f( w, -h);
             glEnd();
+
+            glPopMatrix();
         }
     }
 
@@ -799,108 +905,63 @@ void renderBullets() {
     glDisable(GL_BLEND);
 }
 
-//void renderWeapon(int type)
-//{
-//    //float w = 40;
-//    //float h = 40;
-//
-//    float x = g.mousex;
-//    float y = g.mousey + 40; 
-//
-//   if (g.spacePressed || g.weaponFrame == 0) {
-//
-//        GLuint tex;
-//
-//        if (g.currentWeapon == 0) tex = g.tex.cannonTex;
-//        else if (g.currentWeapon == 1) tex = g.tex.rocketsTex;
-//        else if (g.currentWeapon == 2) tex = g.tex.spaceGunTex;
-//        else tex = g.tex.zapperTex;
-//
-//        float ww = 60;
-//        float hh = 60;
-//
-//        // sprite sheet math
-//        float frameWidth;
-//        switch (g.currentWeapon) {
-//
-//            case 0: frameWidth = 1.0f / 7.0f; break;
-//            case 1: frameWidth = 1.0f / 16.0f; break;
-//            case 2: frameWidth = 1.0f / 12.0f; break;
-//            case 3: frameWidth = 1.0f / 14.0f; break;
-//            default: frameWidth = 1.0f / 7.0f; break;
-//        }
-//
-//        float tx0 = frameWidth * g.weaponFrame;
-//        float tx1 = tx0 + frameWidth;
-//
-//        glBindTexture(GL_TEXTURE_2D, tex);
-//
-//        glBegin(GL_QUADS);
-//            glTexCoord2f(tx0, 1); glVertex2f(x - ww/2, y - hh/2);
-//            glTexCoord2f(tx0, 0); glVertex2f(x - ww/2, y + hh/2);
-//            glTexCoord2f(tx1, 0); glVertex2f(x + ww/2, y + hh/2);
-//            glTexCoord2f(tx1, 1); glVertex2f(x + ww/2, y - hh/2);
-//        glEnd();
-//    }
-//}
 
 void renderShip()
 {
     float w = 60;
     float h = 60;
 
-    float x = g.mousex;
-    float y = g.mousey;
+    float x = g.shipx;
+    float y = g.shipy;
 
+    glPushMatrix();
+    glTranslatef(x, y, 0.0f);
+    glRotatef(g.shipAngle - 90.0f, 0.0f, 0.0f, 1.0f);
+
+    // ship
     glEnable(GL_ALPHA_TEST);
     glAlphaFunc(GL_GREATER, 0.0f);
-
     glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
-
     glBegin(GL_QUADS);
-        glTexCoord2f(0,1); glVertex2f(x - w/2, y - h/2);
-        glTexCoord2f(0,0); glVertex2f(x - w/2, y + h/2);
-        glTexCoord2f(1,0); glVertex2f(x + w/2, y + h/2);
-        glTexCoord2f(1,1); glVertex2f(x + w/2, y - h/2);
+        glTexCoord2f(0,1); glVertex2f(-w/2, -h/2);
+        glTexCoord2f(0,0); glVertex2f(-w/2,  h/2);
+        glTexCoord2f(1,0); glVertex2f( w/2,  h/2);
+        glTexCoord2f(1,1); glVertex2f( w/2, -h/2);
     glEnd();
 
-    if (g.spacePressed || g.weaponFrame == 0) {
+    // weapon (rotates with ship)
+    GLuint tex;
 
-        GLuint tex;
+    if (g.currentWeapon == 0)
+        tex = g.tex.cannonTex;
+    else if (g.currentWeapon == 1) 
+        tex = g.tex.rocketsTex;
+    else if (g.currentWeapon == 2) 
+        tex = g.tex.spaceGunTex;
+    else tex = g.tex.zapperTex;
 
-        if (g.currentWeapon == 0) tex = g.tex.cannonTex;
-        else if (g.currentWeapon == 1) tex = g.tex.rocketsTex;
-        else if (g.currentWeapon == 2) tex = g.tex.spaceGunTex;
-        else tex = g.tex.zapperTex;
+    float frameWidth =
+        (g.currentWeapon == 0) ? 1.0f/7.0f :
+        (g.currentWeapon == 1) ? 1.0f/16.0f :
+        (g.currentWeapon == 2) ? 1.0f/12.0f :
+                                1.0f/14.0f;
 
-        float ww = 40;
-        float hh = 40;
+    float tx0 = frameWidth * g.weaponFrame;
+    float tx1 = tx0 + frameWidth;
 
-        float frameWidth;
+    float ww = 40;
+    float hh = 40;
 
-        switch (g.currentWeapon) {
-
-            case 0: frameWidth = 1.0f / 7.0f; break;
-            case 1: frameWidth = 1.0f / 16.0f; break;
-            case 2: frameWidth = 1.0f / 12.0f; break;
-            case 3: frameWidth = 1.0f / 14.0f; break;
-            default: frameWidth = 1.0f / 7.0f; break;
-        }
-
-        float tx0 = frameWidth * g.weaponFrame;
-        float tx1 = tx0 + frameWidth;
-
-        glBindTexture(GL_TEXTURE_2D, tex);
-
-        glBegin(GL_QUADS);
-            glTexCoord2f(tx0, 1); glVertex2f(x - ww/2, y - hh/2);
-            glTexCoord2f(tx0, 0); glVertex2f(x - ww/2, y + hh/2);
-            glTexCoord2f(tx1, 0); glVertex2f(x + ww/2, y + hh/2);
-            glTexCoord2f(tx1, 1); glVertex2f(x + ww/2, y - hh/2);
-        glEnd();
-    }
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glBegin(GL_QUADS);
+        glTexCoord2f(tx0, 1); glVertex2f(-ww/2, -hh/2);
+        glTexCoord2f(tx0, 0); glVertex2f(-ww/2,  hh/2);
+        glTexCoord2f(tx1, 0); glVertex2f( ww/2,  hh/2);
+        glTexCoord2f(tx1, 1); glVertex2f( ww/2, -hh/2);
+    glEnd();
 
     glDisable(GL_ALPHA_TEST);
+    glPopMatrix();
 }
 
 void render()
@@ -935,5 +996,5 @@ void render()
     r.bot -= 20;
     ggprint16(&r, 10, 0x00ffffff, "Spacebar - shoot");
     r.bot -= 20;
-    ggprint16(&r, 10, 0x00ffffff, "Mouse - movement");
+    ggprint16(&r, 10, 0x00ffffff, "W + Mouse Pointer - movement");
 }
