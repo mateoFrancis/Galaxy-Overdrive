@@ -10,12 +10,16 @@
 #include <GL/glx.h>
 #include <GL/glu.h>
 #include "fonts.h"
+#include <ctime>
 
+
+
+#define MAX_BULLETS 50  // numbr of bullets
 
 class Image {
 public:
     int width, height;
-    unsigned char *data;
+    unsigned char *data = NULL;
     ~Image() { delete [] data; }
 
     Image(const char *fname) {
@@ -165,6 +169,7 @@ public:
         int mousex, mousey;
 
         int spacePressed;
+        int movSwitch;
         int currentWeapon;
 
         int weaponFrame;
@@ -173,16 +178,18 @@ public:
         float shipx, shipy;
         float ShipSpeed;
         float shipAngle;
+        int fps;
 
         int keys[256]; 
 
-        Bullet bullets[30];
+        Bullet bullets[MAX_BULLETS];
 
         Global() {
                 xres=640, yres=480;
                 mousex = xres/2;
                 mousey = yres/2;
                 spacePressed = 0;
+                movSwitch = 1;
                 currentWeapon = 0; // 0=cannon, 1=rockets, 2=spaceGun, 3=zapper
 
                 weaponFrame = 0;
@@ -195,7 +202,7 @@ public:
 
                 memset(keys, 0, sizeof(keys)); // all keys = 0
 
-                for (int i=0; i<30; i++) {
+                for (int i=0; i<MAX_BULLETS; i++) {
 
                         bullets[i].active = 0;
                 }
@@ -289,6 +296,8 @@ int main()
 {
         init_opengl();
         int done=0;
+        int starttime = time(NULL);
+        int nframes = 0;
         while (!done) {
                 while (x11.getXPending()) {
                         XEvent e = x11.getXNextEvent();
@@ -298,9 +307,28 @@ int main()
                 }
                 physics();
                 render();
+                
+                ++nframes;
+		        int currtime = time(NULL);
+		        if (currtime > starttime) {
+		        	starttime = currtime;
+		        	g.fps = nframes;
+		        	nframes = 0;
+		        }
                 x11.swapBuffers();
+                usleep(200);
         }
+        x11.cleanupXWindows();
+
         return 0;
+        
+//fmateolazo@odin:~/4490/project/Galaxy-Overdrive$ ./project
+//.X Error of failed request:  GLXBadDrawable
+//  Major opcode of failed request:  149 (GLX)
+//  Minor opcode of failed request:  11 (X_GLXSwapBuffers)
+//  Serial number of failed request:  2803
+//  Current serial number in output stream:  2803
+
 }
 
 void init_opengl(void)
@@ -512,10 +540,12 @@ int check_keys(XEvent *e)
 
     int key = XLookupKeysym(&e->xkey, 0);
 
-    if (e->type == KeyPress)
-        g.keys[key] = 1;
-    else
-        g.keys[key] = 0;
+    if (key >= 0 && key < 256) {
+        if (e->type == KeyPress)
+            g.keys[key] = 1;
+        else
+            g.keys[key] = 0;
+    }
 
     if (e->type == KeyPress) {
         switch (key) {
@@ -528,6 +558,9 @@ int check_keys(XEvent *e)
 
             case XK_space:
                 g.spacePressed = 1;
+                break;
+            case XK_m: 
+                g.movSwitch = !g.movSwitch;
                 break;
 
             case XK_s:
@@ -593,7 +626,7 @@ float ANIM_SPEED_MULTIPLIER = 5.0f;
 float ZAPPER_ANIM_SPEED = 0.0f;
 
 // max bullets
-int MAX_BULLETS = 50;  // numbr of bullets
+//int MAX_BULLETS = 50;  // numbr of bullets
 
 
 void physics()
@@ -606,6 +639,7 @@ void physics()
     float cosA = cos(rad);
     float sinA = sin(rad);
     float moveSpeed = g.ShipSpeed;
+    float rotateSpeed = 15.0f;
 
     float dx = 0.0f, dy = 0.0f;
 
@@ -617,13 +651,19 @@ void physics()
 
     if (g.keys[XK_a]) {
         
-        dx -= sinA * moveSpeed;
-        dy += cosA * moveSpeed; 
+        if(g.movSwitch) {
+
+            dx -= sinA * moveSpeed;
+            dy += cosA * moveSpeed; 
+        }else {g.shipAngle += rotateSpeed;} 
     }
     if (g.keys[XK_d]) {
         
-        dx += sinA * moveSpeed;
-        dy -= cosA * moveSpeed; 
+        if(g.movSwitch) {
+
+            dx += sinA * moveSpeed;
+            dy -= cosA * moveSpeed; 
+        }else {g.shipAngle -= rotateSpeed;} 
     }
 
     g.shipx += dx;
@@ -641,11 +681,14 @@ void physics()
     if (g.shipy > g.yres) 
         g.shipy = g.yres;
 
-    // Aim at mouse
-    float mx = g.mousex - g.shipx;
-    float my = g.mousey - g.shipy;
+                
+    if(g.movSwitch) {
 
-    g.shipAngle = atan2(my, mx) * 180.0f / M_PI;
+        // aim at mouse
+        float mx = g.mousex - g.shipx;
+        float my = g.mousey - g.shipy;
+        g.shipAngle = atan2(my, mx) * 180.0f / M_PI;
+    }
 
     // for weapon animation
     g.weaponTimer += FRAME_TIME;
@@ -802,9 +845,9 @@ void physics()
 void renderBullets()
 {
     glEnable(GL_ALPHA_TEST);
-    //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    for (int i = 0; i < 30; i++) {
+    for (int i = 0; i < MAX_BULLETS; i++) {
 
         if (!g.bullets[i].active) continue;
 
@@ -928,16 +971,14 @@ void renderShip()
         glTexCoord2f(1,0); glVertex2f( w/2,  h/2);
         glTexCoord2f(1,1); glVertex2f( w/2, -h/2);
     glEnd();
+    glPopMatrix();
 
     // weapon (rotates with ship)
     GLuint tex;
 
-    if (g.currentWeapon == 0)
-        tex = g.tex.cannonTex;
-    else if (g.currentWeapon == 1) 
-        tex = g.tex.rocketsTex;
-    else if (g.currentWeapon == 2) 
-        tex = g.tex.spaceGunTex;
+    if (g.currentWeapon == 0) tex = g.tex.cannonTex;
+    else if (g.currentWeapon == 1) tex = g.tex.rocketsTex;
+    else if (g.currentWeapon == 2) tex = g.tex.spaceGunTex;
     else tex = g.tex.zapperTex;
 
     float frameWidth =
@@ -952,6 +993,8 @@ void renderShip()
     float ww = 40;
     float hh = 40;
 
+
+    glPushMatrix();
     glBindTexture(GL_TEXTURE_2D, tex);
     glBegin(GL_QUADS);
         glTexCoord2f(tx0, 1); glVertex2f(-ww/2, -hh/2);
@@ -992,9 +1035,13 @@ void render()
 	r.bot = g.yres - 20;
 	r.left = 10;
 	r.center = 0;
-    ggprint16(&r, 10, 0x00ffffff, "S - switch weapon"); // white text
+    ggprint12(&r, 2, 0x00ffffff, "S - switch weapon"); // white text
     r.bot -= 20;
-    ggprint16(&r, 10, 0x00ffffff, "Spacebar - shoot");
+    ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");
     r.bot -= 20;
-    ggprint16(&r, 10, 0x00ffffff, "W + Mouse Pointer - movement");
+    ggprint12(&r, 2, 0x00ffffff, "W + Mouse Pointer - movement");
+    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "M - alt movement (WASD)");
+    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "fps: %i", g.fps);
 }
