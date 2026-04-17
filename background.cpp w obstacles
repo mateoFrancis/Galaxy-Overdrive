@@ -1,0 +1,850 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <math.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <GL/glx.h>
+#include <GL/glu.h>
+#include "fonts.h"
+#include <ctime>
+
+int   g_xres = 640;
+int   g_yres = 480;
+float g_time  = 0.0f;   // updated every frame in physics()
+
+/* ============================================================
+ *  obstacles module (self-contained header-style .cpp)
+ * ============================================================ */
+#include "obstacles.cpp"
+
+/* ============================================================
+ *  Remaining game code
+ * ============================================================ */
+
+#define MAX_BULLETS 50
+
+// ---------------------------------------------------------------------------
+// Image loader
+// ---------------------------------------------------------------------------
+class Image {
+public:
+    int width, height;
+    unsigned char *data;
+
+    Image() : width(0), height(0), data(NULL) {}
+
+    ~Image() { delete[] data; }
+
+    void load(const char *fname) {
+        if (!fname || fname[0] == '\0') return;
+
+        char name[256];
+        strncpy(name, fname, sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
+
+        // strip extension
+        int slen = (int)strlen(name);
+        if (slen >= 4) name[slen - 4] = '\0';
+
+        char ppmname[512];
+        snprintf(ppmname, sizeof(ppmname), "%s.ppm", name);
+
+        char ts[512];
+        snprintf(ts, sizeof(ts), "convert %s %s", fname, ppmname);
+        system(ts);
+
+        FILE *fpi = fopen(ppmname, "rb");
+        if (!fpi) {
+            printf("ERROR opening image: %s\n", ppmname);
+            exit(1);
+        }
+
+        char line[200];
+        fgets(line, 200, fpi);   // P6
+        fgets(line, 200, fpi);
+        while (line[0] == '#')
+            fgets(line, 200, fpi);
+
+        sscanf(line, "%i %i", &width, &height);
+        fgets(line, 200, fpi);   // maxval
+
+        int n = width * height * 4;
+        data = new unsigned char[n];
+
+        for (int i = 0; i < width * height; i++) {
+            unsigned char r = (unsigned char)fgetc(fpi);
+            unsigned char g = (unsigned char)fgetc(fpi);
+            unsigned char b = (unsigned char)fgetc(fpi);
+            data[i*4+0] = r;
+            data[i*4+1] = g;
+            data[i*4+2] = b;
+            data[i*4+3] = (r < 50 && g < 50 && b < 50) ? 0 : 255;
+        }
+        fclose(fpi);
+        unlink(ppmname);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Texture container
+// ---------------------------------------------------------------------------
+struct Texture {
+    GLuint backTex;
+    GLuint logoTex;
+    GLuint ship01Tex;
+    GLuint shipSlightTex;
+    GLuint shipMidTex;
+    GLuint shipVeryTex;
+    GLuint cannonTex;
+    GLuint rocketsTex;
+    GLuint spaceGunTex;
+    GLuint zapperTex;
+    GLuint bulletCannonTex;
+    GLuint bulletRocketTex;
+    GLuint bulletSpaceGunTex;
+    GLuint bulletZapperTex;
+
+    int logoW, logoH;
+    float xc[2];
+    float yc[2];
+};
+
+// ---------------------------------------------------------------------------
+// Bullet
+// ---------------------------------------------------------------------------
+struct Bullet {
+    float x, y;
+    float xVel, yVel;
+    float vel;
+    int   active;
+    int   type;        // 0=cannon 1=rocket 2=spaceGun 3=zapper
+    int   frame;
+    float frameTimer;
+    float angle;
+};
+
+// ---------------------------------------------------------------------------
+// Title animation
+// ---------------------------------------------------------------------------
+struct TitleAnim {
+    float timer;
+    TitleAnim() : timer(0.0f) {}
+};
+
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
+class Global {
+public:
+    int xres, yres;
+    Texture tex;
+    TitleAnim title;
+
+    int mousex, mousey;
+    int spacePressed;
+    int movSwitch;
+    int currentWeapon;
+
+    int   weaponFrame;
+    float weaponTimer;
+
+    float shipx, shipy;
+    float ShipSpeed;
+    float shipAngle;
+    int   fps;
+
+    int   keys[512];   // XK_ syms can exceed 256
+    Bullet bullets[MAX_BULLETS];
+
+    // player health / score
+    int   playerHP;
+    int   score;
+
+    Global()
+        : xres(640), yres(480),
+          mousex(320), mousey(240),
+          spacePressed(0), movSwitch(1), currentWeapon(0),
+          weaponFrame(0), weaponTimer(0.0f),
+          shipx(320.0f), shipy(160.0f),
+          ShipSpeed(6.0f), shipAngle(0.0f),
+          fps(0), playerHP(10), score(0)
+    {
+        memset(keys, 0, sizeof(keys));
+        for (int i = 0; i < MAX_BULLETS; i++)
+            bullets[i].active = 0;
+    }
+} g;
+
+// ---------------------------------------------------------------------------
+// X11 / GLX wrapper
+// ---------------------------------------------------------------------------
+class X11_wrapper {
+    Display  *dpy;
+    Window    win;
+    GLXContext glc;
+public:
+    X11_wrapper() {
+        GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
+        dpy = XOpenDisplay(NULL);
+        if (!dpy) { printf("Cannot connect to X server\n"); exit(1); }
+
+        Window root = DefaultRootWindow(dpy);
+        XVisualInfo *vi = glXChooseVisual(dpy, 0, att);
+        if (!vi) { printf("No appropriate visual\n"); exit(1); }
+
+        Colormap cmap = XCreateColormap(dpy, root, vi->visual, AllocNone);
+        XSetWindowAttributes swa;
+        swa.colormap  = cmap;
+        swa.event_mask =
+            ExposureMask | KeyPressMask | KeyReleaseMask |
+            PointerMotionMask | ButtonPressMask | ButtonReleaseMask |
+            StructureNotifyMask | SubstructureNotifyMask;
+
+        win = XCreateWindow(dpy, root, 0, 0, g.xres, g.yres, 0,
+                            vi->depth, InputOutput, vi->visual,
+                            CWColormap | CWEventMask, &swa);
+        XMapWindow(dpy, win);
+        XStoreName(dpy, win, "Galaxy Overdrive");
+
+        glc = glXCreateContext(dpy, vi, NULL, GL_TRUE);
+        glXMakeCurrent(dpy, win, glc);
+    }
+
+    void cleanupXWindows() {
+        glXMakeCurrent(dpy, None, NULL);
+        glXDestroyContext(dpy, glc);
+        XDestroyWindow(dpy, win);
+        XCloseDisplay(dpy);
+    }
+
+    void reshape(int w, int h) {
+        g.xres = w; g.yres = h;
+        g_xres = w; g_yres = h;    // keep obstacle module in sync
+        glViewport(0, 0, w, h);
+        glMatrixMode(GL_PROJECTION); glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);  glLoadIdentity();
+        glOrtho(0, w, 0, h, -10, 1);
+        XStoreName(dpy, win, "Galaxy Overdrive");
+    }
+
+    bool getXPending() { return XPending(dpy); }
+
+    XEvent getXNextEvent() {
+        XEvent e; XNextEvent(dpy, &e); return e;
+    }
+
+    void swapBuffers() { glXSwapBuffers(dpy, win); }
+
+    void check_resize(XEvent *e) {
+        if (e->type != ConfigureNotify) return;
+        XConfigureEvent xce = e->xconfigure;
+        if (xce.width != g.xres || xce.height != g.yres)
+            reshape(xce.width, xce.height);
+    }
+} x11;
+
+// ---------------------------------------------------------------------------
+// Texture helper
+// ---------------------------------------------------------------------------
+static void upload_texture(GLuint *tex, Image *img, bool mipmap = false) {
+    glGenTextures(1, tex);
+    glBindTexture(GL_TEXTURE_2D, *tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                    mipmap ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST);
+    if (mipmap)
+        gluBuild2DMipmaps(GL_TEXTURE_2D, 4, img->width, img->height,
+                          GL_RGBA, GL_UNSIGNED_BYTE, img->data);
+    else
+        glTexImage2D(GL_TEXTURE_2D, 0, 4, img->width, img->height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, img->data);
+}
+
+// Images are loaded here (global so textures outlive init_opengl scope).
+static Image img_back, img_logo;
+static Image img_ship01, img_shipSlight, img_shipMid, img_shipVery;
+static Image img_cannon, img_rockets, img_spaceGun, img_zapper;
+static Image img_bCannon, img_bRocket, img_bSpaceGun, img_bZapper;
+
+// ---------------------------------------------------------------------------
+// Forward declarations
+// ---------------------------------------------------------------------------
+void init_opengl();
+void check_mouse(XEvent *e);
+int  check_keys(XEvent *e);
+void physics(float dt);
+void render();
+void renderShip();
+void renderBullets();
+void title_render(const TitleAnim &t);
+void title_physics(TitleAnim &t);
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+int main()
+{
+    init_opengl();
+    obstaclesInit();    // seed + spawn all obstacles
+
+    int done = 0;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    int nframes = 0;
+    time_t secTimer = time(NULL);
+
+    while (!done) {
+        while (x11.getXPending()) {
+            XEvent e = x11.getXNextEvent();
+            x11.check_resize(&e);
+            check_mouse(&e);
+            done = check_keys(&e);
+        }
+
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        float dt = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9f;
+        t0 = t1;
+        if (dt > 0.05f) dt = 0.05f;   // clamp for slow frames
+        g_time += dt;
+
+        physics(dt);
+        render();
+
+        ++nframes;
+        time_t now = time(NULL);
+        if (now > secTimer) {
+            secTimer = now;
+            g.fps = nframes;
+            nframes = 0;
+        }
+
+        x11.swapBuffers();
+        usleep(200);
+    }
+
+    x11.cleanupXWindows();
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// init_opengl
+// ---------------------------------------------------------------------------
+void init_opengl()
+{
+    glViewport(0, 0, g.xres, g.yres);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);  glLoadIdentity();
+    glOrtho(0, g.xres, 0, g.yres, -1, 1);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_TEXTURE_2D);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    initialize_fonts();
+
+    // Load images
+    img_back.load("./images/Starfield08.png");
+    img_logo.load("./images/galov.png");
+    img_ship01.load("./ship_sprites/ship_full.png");
+    img_shipSlight.load("./ship_sprites/ship_slight.png");
+    img_shipMid.load("./ship_sprites/ship_mid.png");
+    img_shipVery.load("./ship_sprites/ship_very.png");
+    img_cannon.load("./weapons/cannon.png");
+    img_rockets.load("./weapons/rockets.png");
+    img_spaceGun.load("./weapons/spaceGun.png");
+    img_zapper.load("./weapons/zapper.png");
+    img_bCannon.load("./bullets/weapons_cannon.png");
+    img_bRocket.load("./bullets/weapons_rocket.png");
+    img_bSpaceGun.load("./bullets/weapons_spaceGun.png");
+    img_bZapper.load("./bullets/weapons_zapper.png");
+
+    // Upload textures
+    upload_texture(&g.tex.backTex,       &img_back);
+    upload_texture(&g.tex.logoTex,       &img_logo, true);
+    upload_texture(&g.tex.ship01Tex,     &img_ship01);
+    upload_texture(&g.tex.shipSlightTex, &img_shipSlight);
+    upload_texture(&g.tex.shipMidTex,    &img_shipMid);
+    upload_texture(&g.tex.shipVeryTex,   &img_shipVery);
+    upload_texture(&g.tex.cannonTex,     &img_cannon);
+    upload_texture(&g.tex.rocketsTex,    &img_rockets);
+    upload_texture(&g.tex.spaceGunTex,   &img_spaceGun);
+    upload_texture(&g.tex.zapperTex,     &img_zapper);
+    upload_texture(&g.tex.bulletCannonTex,   &img_bCannon);
+    upload_texture(&g.tex.bulletRocketTex,   &img_bRocket);
+    upload_texture(&g.tex.bulletSpaceGunTex, &img_bSpaceGun);
+    upload_texture(&g.tex.bulletZapperTex,   &img_bZapper);
+
+    g.tex.logoW = img_logo.width;
+    g.tex.logoH = img_logo.height;
+
+    g.tex.xc[0] = 0.0f; g.tex.xc[1] = 1.0f;
+    g.tex.yc[0] = 0.0f; g.tex.yc[1] = 1.0f;
+
+    // Blend set once; individual draw functions enable/disable as needed.
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+// ---------------------------------------------------------------------------
+// check_mouse
+// ---------------------------------------------------------------------------
+void check_mouse(XEvent *e)
+{
+    if (e->type == MotionNotify) {
+        g.mousex = e->xmotion.x;
+        g.mousey = g.yres - e->xmotion.y;
+    }
+    // Button events unused for now
+}
+
+// ---------------------------------------------------------------------------
+// check_keys
+// ---------------------------------------------------------------------------
+int check_keys(XEvent *e)
+{
+    if (e->type != KeyPress && e->type != KeyRelease) return 0;
+
+    int key = XLookupKeysym(&e->xkey, 0);
+
+    // Store key state (guard against invalid keysym)
+    if (key >= 0 && key < 512) {
+        g.keys[key] = (e->type == KeyPress) ? 1 : 0;
+    }
+
+    if (e->type == KeyPress) {
+        switch (key) {
+            case XK_Escape: return 1;
+
+            case XK_equal:
+                g.ShipSpeed = fminf(g.ShipSpeed * 2.0f, 96.0f);
+                break;
+
+            case XK_space:
+                g.spacePressed = 1;
+                break;
+
+            case XK_m:
+                g.movSwitch = !g.movSwitch;
+                break;
+
+            case XK_s:
+                g.currentWeapon = (g.currentWeapon + 1) % 4;
+                g.weaponFrame = 0;
+                g.weaponTimer = 0.0f;
+                break;
+
+            case XK_r:
+                // reset / new wave
+                obstaclesReset();
+                g.playerHP = 10;
+                g.score    = 0;
+                break;
+        }
+    }
+
+    if (e->type == KeyRelease && key == XK_space)
+        g.spacePressed = 0;
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// title helpers
+// ---------------------------------------------------------------------------
+void title_physics(TitleAnim &t)
+{
+    if (t.timer < 1.0f) t.timer += 0.01f;
+}
+
+void title_render(const TitleAnim &t)
+{
+    float ease = t.timer * t.timer * (3.0f - 2.0f * t.timer);
+    float maxW = g.xres * 0.6f;
+    float maxH = maxW * ((float)g.tex.logoH / (float)g.tex.logoW);
+    float w  = maxW * ease,  h  = maxH * ease;
+    float cx = g.xres / 2.0f, cy = g.yres / 2.0f;
+
+    glEnable(GL_BLEND);
+    glBindTexture(GL_TEXTURE_2D, g.tex.logoTex);
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+        glTexCoord2f(0,1); glVertex2f(cx - w/2, cy - h/2);
+        glTexCoord2f(0,0); glVertex2f(cx - w/2, cy + h/2);
+        glTexCoord2f(1,0); glVertex2f(cx + w/2, cy + h/2);
+        glTexCoord2f(1,1); glVertex2f(cx + w/2, cy - h/2);
+    glEnd();
+    glDisable(GL_BLEND);
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+static const float FRAME_TIME          = 0.016f;   // nominal per-frame dt
+static const float FIRE_COOLDOWN       = 0.3f;     // seconds between shots
+static const float ANIM_SPEED_MULT     = 2.0f;
+static const float SHIP_COLLISION_RAD  = 22.0f;
+static const float BULLET_COLLISION_RAD= 8.0f;
+
+// ---------------------------------------------------------------------------
+// physics  (now takes real dt from main loop)
+// ---------------------------------------------------------------------------
+void physics(float dt)
+{
+    // Scroll background
+    g.tex.yc[0] += 0.005f;
+    g.tex.yc[1] += 0.005f;
+
+    // ---- Ship movement ----
+    float rad    = g.shipAngle * (float)M_PI / 180.0f;
+    float cosA   = cosf(rad), sinA = sinf(rad);
+    float rotSpd = 120.0f * dt;
+    float movSpd = g.ShipSpeed;
+
+    float dx = 0, dy = 0;
+    if (g.keys[XK_w]) { dx += cosA * movSpd; dy += sinA * movSpd; }
+    if (g.keys[XK_s] && !g.movSwitch) { dx -= cosA * movSpd; dy -= sinA * movSpd; }
+    if (g.keys[XK_a]) {
+        if (g.movSwitch) { dx -= sinA * movSpd; dy += cosA * movSpd; }
+        else g.shipAngle += rotSpd;
+    }
+    if (g.keys[XK_d]) {
+        if (g.movSwitch) { dx += sinA * movSpd; dy -= cosA * movSpd; }
+        else g.shipAngle -= rotSpd;
+    }
+
+    g.shipx += dx; g.shipy += dy;
+    g.shipx = fmaxf(0, fminf(g.shipx, (float)g.xres));
+    g.shipy = fmaxf(0, fminf(g.shipy, (float)g.yres));
+
+    // Mouse-aim mode
+    if (g.movSwitch) {
+        float mx = g.mousex - g.shipx;
+        float my = g.mousey - g.shipy;
+        g.shipAngle = atan2f(my, mx) * 180.0f / (float)M_PI;
+    }
+
+    // ---- Weapon animation timer ----
+    g.weaponTimer += dt;
+
+    int maxFrames = (g.currentWeapon == 0) ? 7  :
+                    (g.currentWeapon == 1) ? 16 :
+                    (g.currentWeapon == 2) ? 12 : 14;
+
+    // ---- Fire bullets ----
+    if (g.spacePressed && g.currentWeapon != 3) {
+        if (g.weaponTimer >= FIRE_COOLDOWN) {
+            g.weaponTimer = 0.0f;
+            for (int i = 0; i < MAX_BULLETS; i++) {
+                if (!g.bullets[i].active) {
+                    g.bullets[i].active    = 1;
+                    g.bullets[i].type      = g.currentWeapon;
+                    g.bullets[i].x         = g.shipx;
+                    g.bullets[i].y         = g.shipy;
+                    g.bullets[i].vel       = 10.0f;
+                    g.bullets[i].frame     = 0;
+                    g.bullets[i].frameTimer= 0.0f;
+                    g.bullets[i].angle     = g.shipAngle;
+                    float rb = g.shipAngle * (float)M_PI / 180.0f;
+                    g.bullets[i].xVel = cosf(rb) * g.bullets[i].vel;
+                    g.bullets[i].yVel = sinf(rb) * g.bullets[i].vel;
+                    break;
+                }
+            }
+            g.weaponFrame = (g.weaponFrame + (int)ANIM_SPEED_MULT) % maxFrames;
+            if (g.weaponFrame == 0) g.weaponFrame = 1;
+        }
+    } else if (g.currentWeapon != 3) {
+        g.weaponFrame = 0;
+    }
+
+    // ---- Zapper ----
+    if (g.currentWeapon == 3) {
+        if (g.spacePressed) {
+            bool zapActive = false;
+            for (int i = 0; i < MAX_BULLETS; i++)
+                if (g.bullets[i].active && g.bullets[i].type == 3)
+                    { zapActive = true; break; }
+
+            if (!zapActive) {
+                for (int i = 0; i < MAX_BULLETS; i++) {
+                    if (!g.bullets[i].active) {
+                        g.bullets[i].active = 1; g.bullets[i].type = 3;
+                        g.bullets[i].x = g.shipx; g.bullets[i].y = g.shipy;
+                        g.bullets[i].angle = g.shipAngle;
+                        g.bullets[i].frame = 0; g.bullets[i].frameTimer = 0;
+                        g.bullets[i].xVel = 0; g.bullets[i].yVel = 0;
+                        break;
+                    }
+                }
+            }
+            g.weaponFrame = (g.weaponFrame + 1) % maxFrames;
+            if (g.weaponFrame == 0) g.weaponFrame = 1;
+        } else {
+            for (int i = 0; i < MAX_BULLETS; i++)
+                if (g.bullets[i].type == 3) g.bullets[i].active = 0;
+            g.weaponFrame = 0;
+        }
+    }
+
+    // ---- Move bullets + bullet animation ----
+    float bulletAnimIntervals[4] = { 0.1f, 0.08f, 0.05f, 0.07f };
+    int   bulletMaxFrames[4]     = { 4,    3,      10,    8 };
+
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (!g.bullets[i].active) continue;
+
+        g.bullets[i].x += g.bullets[i].xVel;
+        g.bullets[i].y += g.bullets[i].yVel;
+
+        // Screen-exit deactivation (not zapper)
+        int t = g.bullets[i].type;
+        if (t != 3 &&
+            (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
+             g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20))
+            g.bullets[i].active = 0;
+
+        if (!g.bullets[i].active) continue;
+
+        // Frame animation
+        g.bullets[i].frameTimer += dt;
+        if (g.bullets[i].frameTimer > bulletAnimIntervals[t]) {
+            g.bullets[i].frameTimer = 0.0f;
+            g.bullets[i].frame = (g.bullets[i].frame + 1) % bulletMaxFrames[t];
+        }
+
+        // ---- Bullet → Asteroid collision ----
+        int hit = obstaclesCheckBulletAsteroid(
+            g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
+        if (hit >= 0) {
+            g.bullets[i].active = 0;
+            g.score += 10;
+            continue;
+        }
+
+        // ---- Bullet → Barrier collision ----
+        int bHit = obstaclesCheckBulletBarrier(
+            g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
+        if (bHit >= 0) {
+            g.bullets[i].active = 0;
+            continue;
+        }
+    }
+
+    // ---- Player → Mine collision ----
+    int mineHit = obstaclesCheckPlayerMine(g.shipx, g.shipy, SHIP_COLLISION_RAD);
+    if (mineHit >= 0) {
+        g.playerHP = fmaxf(0, g.playerHP - 2);
+    }
+
+    // ---- Turret bullet → Player collision ----
+    if (obstaclesCheckTurretHitsPlayer(g.shipx, g.shipy, SHIP_COLLISION_RAD)) {
+        g.playerHP = fmaxf(0, g.playerHP - 1);
+    }
+
+    // ---- Player → Barrier collision (push back) ----
+    if (obstaclesCheckPlayerBarrier(g.shipx, g.shipy, SHIP_COLLISION_RAD) >= 0) {
+        // Simple push-back: undo last move
+        g.shipx -= dx; g.shipy -= dy;
+    }
+
+    // ---- Warp gate ----
+    if (obstaclesCheckWarpGate(g.shipx, g.shipy)) {
+        // Teleport ship to opposite corner as a placeholder
+        g.shipx = (float)g.xres - g.shipx;
+        g.shipy = (float)g.yres - g.shipy;
+        g.score += 50;
+    }
+
+    // ---- Update obstacles ----
+    obstaclesUpdate(dt, g.shipx, g.shipy);
+
+    title_physics(g.title);
+}
+
+// ---------------------------------------------------------------------------
+// renderShip
+// ---------------------------------------------------------------------------
+void renderShip()
+{
+    float w = 60.0f, h = 60.0f;
+
+    glEnable(GL_BLEND);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.0f);
+
+    // Ship body — rotated
+    glPushMatrix();
+    glTranslatef(g.shipx, g.shipy, 0);
+    glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
+
+    glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+        glTexCoord2f(0,1); glVertex2f(-w/2, -h/2);
+        glTexCoord2f(0,0); glVertex2f(-w/2,  h/2);
+        glTexCoord2f(1,0); glVertex2f( w/2,  h/2);
+        glTexCoord2f(1,1); glVertex2f( w/2, -h/2);
+    glEnd();
+    glPopMatrix();
+
+    // Weapon — same rotation as ship
+    GLuint wtex;
+    float frameWidth;
+    if      (g.currentWeapon == 0) { wtex = g.tex.cannonTex;   frameWidth = 1.0f/7.0f;  }
+    else if (g.currentWeapon == 1) { wtex = g.tex.rocketsTex;  frameWidth = 1.0f/16.0f; }
+    else if (g.currentWeapon == 2) { wtex = g.tex.spaceGunTex; frameWidth = 1.0f/12.0f; }
+    else                           { wtex = g.tex.zapperTex;   frameWidth = 1.0f/14.0f; }
+
+    float wFrame  = (float)g.weaponFrame;
+    float tx0 = frameWidth * wFrame;
+    float tx1 = tx0 + frameWidth;
+    float ww  = 40.0f, hh = 40.0f;
+
+    glPushMatrix();
+    glTranslatef(g.shipx, g.shipy, 0);
+    glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
+
+    glBindTexture(GL_TEXTURE_2D, wtex);
+    glBegin(GL_QUADS);
+        glTexCoord2f(tx0,1); glVertex2f(-ww/2, -hh/2);
+        glTexCoord2f(tx0,0); glVertex2f(-ww/2,  hh/2);
+        glTexCoord2f(tx1,0); glVertex2f( ww/2,  hh/2);
+        glTexCoord2f(tx1,1); glVertex2f( ww/2, -hh/2);
+    glEnd();
+    glPopMatrix();
+
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_BLEND);
+}
+
+// ---------------------------------------------------------------------------
+// renderBullets
+// ---------------------------------------------------------------------------
+void renderBullets()
+{
+    glEnable(GL_BLEND);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.01f);
+    glColor4f(1, 1, 1, 1);
+
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (!g.bullets[i].active) continue;
+
+        int t = g.bullets[i].type;
+        GLuint tex;
+        float  frameWidth;
+        switch (t) {
+            case 0:  tex = g.tex.bulletCannonTex;   frameWidth = 1.0f/4.0f;  break;
+            case 1:  tex = g.tex.bulletRocketTex;   frameWidth = 1.0f/3.0f;  break;
+            case 2:  tex = g.tex.bulletSpaceGunTex; frameWidth = 1.0f/10.0f; break;
+            default: tex = g.tex.bulletZapperTex;   frameWidth = 1.0f/8.0f;  break;
+        }
+
+        float tx0 = frameWidth * g.bullets[i].frame;
+        float tx1 = tx0 + frameWidth;
+        float x = g.bullets[i].x, y = g.bullets[i].y;
+        float bw = 20.0f, bh = 20.0f;
+
+        glBindTexture(GL_TEXTURE_2D, tex);
+
+        if (t == 1) {
+            // Rockets — 4 spread projectiles
+            glPushMatrix();
+            glTranslatef(x, y, 0);
+            glRotatef(g.bullets[i].angle - 90.0f, 0, 0, 1);
+            float spacing = 10.0f;
+            for (int j = 0; j < 4; j++) {
+                float off = (j - 1.5f) * spacing;
+                glBegin(GL_QUADS);
+                    glTexCoord2f(tx0,1); glVertex2f(off-bw, -bh-15);
+                    glTexCoord2f(tx0,0); glVertex2f(off-bw,  bh);
+                    glTexCoord2f(tx1,0); glVertex2f(off+bw,  bh);
+                    glTexCoord2f(tx1,1); glVertex2f(off+bw, -bh-15);
+                glEnd();
+            }
+            glPopMatrix();
+        } else if (t == 3) {
+            // Zapper beam — originates at ship, extends in aim direction
+            glPushMatrix();
+            glTranslatef(g.shipx, g.shipy, 0);
+            glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
+            float beamLen = (float)g.yres;
+            float beamW   = 40.0f;
+            glBegin(GL_QUADS);
+                glTexCoord2f(tx0,1); glVertex2f(-beamW/2, 0);
+                glTexCoord2f(tx0,0); glVertex2f(-beamW/2, beamLen);
+                glTexCoord2f(tx1,0); glVertex2f( beamW/2, beamLen);
+                glTexCoord2f(tx1,1); glVertex2f( beamW/2, 0);
+            glEnd();
+            glPopMatrix();
+        } else {
+            // Normal bullets
+            glPushMatrix();
+            glTranslatef(x, y, 0);
+            glRotatef(g.bullets[i].angle - 90.0f, 0, 0, 1);
+            glBegin(GL_QUADS);
+                glTexCoord2f(tx0,1); glVertex2f(-bw, -bh);
+                glTexCoord2f(tx0,0); glVertex2f(-bw,  bh);
+                glTexCoord2f(tx1,0); glVertex2f( bw,  bh);
+                glTexCoord2f(tx1,1); glVertex2f( bw, -bh);
+            glEnd();
+            glPopMatrix();
+        }
+    }
+
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_BLEND);
+}
+
+// ---------------------------------------------------------------------------
+// renderHUD
+// ---------------------------------------------------------------------------
+static void renderHUD()
+{
+    Rect r;
+    r.bot    = g.yres - 20;
+    r.left   = 10;
+    r.center = 0;
+
+    ggprint12(&r, 2, 0x00ffffff, "S - switch weapon");  r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "W + Mouse - move");    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "M - alt WASD mode");   r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "R - reset obstacles"); r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "fps: %i", g.fps);      r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "HP: %i", g.playerHP);  r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "Score: %i", g.score);
+}
+
+// ---------------------------------------------------------------------------
+// render
+// ---------------------------------------------------------------------------
+void render()
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColor4f(1, 1, 1, 1);
+
+    // Background
+    glDisable(GL_BLEND);
+    glBindTexture(GL_TEXTURE_2D, g.tex.backTex);
+    glBegin(GL_QUADS);
+        glTexCoord2f(g.tex.xc[0], g.tex.yc[1]); glVertex2i(0,       0);
+        glTexCoord2f(g.tex.xc[0], g.tex.yc[0]); glVertex2i(0,       g.yres);
+        glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres,  g.yres);
+        glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres,  0);
+    glEnd();
+
+    title_render(g.title);
+
+    // Obstacles (drawn with their own GL state management)
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    obstaclesDraw();
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+
+    renderShip();
+    renderBullets();
+    renderHUD();
+}
+
