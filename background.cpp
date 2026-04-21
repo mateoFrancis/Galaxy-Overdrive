@@ -16,6 +16,8 @@ int   g_yres = 480;
 float g_time  = 0.0f;
 
 #include "obstacles.cpp"
+#include "enemy.cpp"
+#include "enemy.h"
 
 #define MAX_BULLETS 50
 
