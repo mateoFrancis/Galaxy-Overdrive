@@ -158,6 +158,7 @@ public:
     float ShipSpeed;
     float shipAngle;
     int   fps;
+    int paused;
 
     int   keys[512];
     Bullet bullets[MAX_BULLETS];
@@ -188,6 +189,7 @@ public:
     {
         memset(keys, 0, sizeof(keys));
         displayHP = playerHP;
+        paused = 0;
         for (int i = 0; i < MAX_BULLETS; i++)
             bullets[i].active = 0;
     }
@@ -267,7 +269,7 @@ static void upload_texture(GLuint *tex, Image *img) {
                  GL_RGBA, GL_UNSIGNED_BYTE, img->data);
 }
 
-static Image img_back, img_logo, img_rays;
+static Image img_back, img_logo;
 static Image img_ship01, img_shipSlight, img_shipMid, img_shipVery;
 static Image img_cannon, img_rockets, img_spaceGun, img_zapper;
 static Image img_bCannon, img_bRocket, img_bSpaceGun, img_bZapper;
@@ -284,6 +286,7 @@ void title_render(const TitleAnim &t);
 void title_physics(TitleAnim &t);
 void renderStartButton();
 void renderLevelIntro();
+void renderPause();
 
 int main()
 {
@@ -318,8 +321,15 @@ int main()
         if (dt > 0.05f) dt = 0.05f;
         g_time += dt;
 
-        physics(dt);
+        if (!g.paused) {
+            physics(dt);
+        }
+
         render();
+
+        if (g.paused) {
+            renderPause();
+        }
 
         ++nframes;
         time_t now = time(NULL);
@@ -361,7 +371,6 @@ void init_opengl()
     img_bRocket.load("./bullets/weapons_rocket.png");
     img_bSpaceGun.load("./bullets/weapons_spaceGun.png");
     img_bZapper.load("./bullets/weapons_zapper.png");
-    img_rays.load("./images/rays_sprite.png");
     img_health.load("./images/health.png");
 
     upload_texture(&g.tex.backTex,       &img_back);
@@ -378,7 +387,6 @@ void init_opengl()
     upload_texture(&g.tex.bulletRocketTex,   &img_bRocket);
     upload_texture(&g.tex.bulletSpaceGunTex, &img_bSpaceGun);
     upload_texture(&g.tex.bulletZapperTex,   &img_bZapper);
-    upload_texture(&g.tex.raysTex, &img_rays);
     upload_texture(&g.tex.healthTex, &img_health);
 
 
@@ -428,7 +436,14 @@ int check_keys(XEvent *e)
                 g.movSwitch = !g.movSwitch;
                 break;
 
-            case XK_s:
+            case XK_k:
+
+                // clear zapper
+                for (int i = 0; i < MAX_BULLETS; i++) {
+                    if (g.bullets[i].type == 3)
+                        g.bullets[i].active = 0;
+                }
+
                 g.currentWeapon = (g.currentWeapon + 1) % 4;
                 g.weaponFrame = 0;
                 g.weaponTimer = 0.0f;
@@ -441,6 +456,10 @@ int check_keys(XEvent *e)
                     g.score    = 0;
                 }
                 break;
+            
+            case XK_p:
+                g.paused = !g.paused;
+                break;
         }
     }
 
@@ -448,6 +467,29 @@ int check_keys(XEvent *e)
         g.spacePressed = 0;
 
     return 0;
+}
+void renderPause()
+{
+    glDisable(GL_TEXTURE_2D);
+
+    // dark tint
+    glColor4f(0, 0, 0, 0.5f);
+    glBegin(GL_QUADS);
+        glVertex2f(0, 0);
+        glVertex2f(g.xres, 0);
+        glVertex2f(g.xres, g.yres);
+        glVertex2f(0, g.yres);
+    glEnd();
+
+    glEnable(GL_TEXTURE_2D);
+
+    // text
+    Rect r;
+    r.bot = g.yres / 2;
+    r.left = g.xres / 2;
+    r.center = 1;
+
+    ggprint16(&r, 0, 0x00ffffff, "PAUSED");
 }
 
 void title_physics(TitleAnim &t)
@@ -462,47 +504,6 @@ void title_render(const TitleAnim &t)
     float maxH = maxW * ((float)g.tex.logoH / (float)g.tex.logoW);
     float w  = maxW * ease,  h  = maxH * ease;
     float cx = g.xres / 2.0f, cy = g.yres / 2.0f;
-
-
-
-    int frame = (int)(g_time * 10.0f) % 14;
-    int row = 0;
-    int col = 0;
-
-    if (frame < 5) {
-        row = 0;
-        col = frame;
-    }
-    else if (frame < 10) {
-        row = 1;
-        col = frame - 5;
-    }
-    else {
-        row = 2;
-        col = frame - 10;
-    }
-
-    float cols = 5.0f;
-    float rows = 3.0f;
-
-    float fw = 1.0f / cols;
-    float fh = 1.0f / rows;
-
-    float tx0 = col * fw;
-    float tx1 = tx0 + fw;
-
-    float ty1 = 1.0f - row * fh;
-    float ty0 = ty1 - fh;
-
-    glBindTexture(GL_TEXTURE_2D, g.tex.raysTex);
-    glColor4f(1, 1, 1, 0.9f);
-
-    glBegin(GL_QUADS);
-        glTexCoord2f(tx0, ty1); glVertex2f(cx - w/2, cy - h/2);
-        glTexCoord2f(tx0, ty0); glVertex2f(cx - w/2, cy + h/2);
-        glTexCoord2f(tx1, ty0); glVertex2f(cx + w/2, cy + h/2);
-        glTexCoord2f(tx1, ty1); glVertex2f(cx + w/2, cy - h/2);
-    glEnd();
 
     glBindTexture(GL_TEXTURE_2D, g.tex.logoTex);
     glColor4f(1, 1, 1, 1);
@@ -909,8 +910,10 @@ void renderBullets()
             glPushMatrix();
             glTranslatef(g.shipx, g.shipy, 0);
             glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
-            float beamLen = (float)g.yres;
+
+            float beamLen = sqrtf(g.xres * g.xres + g.yres * g.yres);
             float beamW   = 40.0f * s;
+            
             glBegin(GL_QUADS);
                 glTexCoord2f(tx0,1); glVertex2f(-beamW/2, 0);
                 glTexCoord2f(tx0,0); glVertex2f(-beamW/2, beamLen);
@@ -1006,10 +1009,10 @@ static void renderHUD()
     r.left   = 10;
     r.center = 0;
 
-    ggprint12(&r, 2, 0x00ffffff, "S - switch weapon");  r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "K - switch weapon");  r.bot -= 20;
     ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");    r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "W + Mouse - move");    r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "M - alt WASD mode");   r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "WASD- move");    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "M - alt movement W + Mouse");   r.bot -= 20;
 
     if (g.state == STATE_PLAYING) {
         ggprint12(&r, 2, 0x00ffffff, "R - reset obstacles"); r.bot -= 20;
