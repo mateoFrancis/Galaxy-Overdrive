@@ -16,10 +16,12 @@ int   g_yres = 480;
 float g_time  = 0.0f;
 
 #include "obstacles.cpp"
-#include "enemy.cpp"
-#include "enemy.h"
+//#include "enemy.cpp"
+//#include "enemy.h"
 
 #define MAX_BULLETS 50
+const int VIRTUAL_W = 640;
+const int VIRTUAL_H = 480;
 
 enum GameState {
     STATE_TITLE,
@@ -100,6 +102,8 @@ struct Texture {
     GLuint bulletRocketTex;
     GLuint bulletSpaceGunTex;
     GLuint bulletZapperTex;
+    GLuint raysTex;
+    GLuint healthTex;
 
     int logoW, logoH;
     float xc[2];
@@ -168,19 +172,22 @@ public:
     float     levelIntroTimer;
     int       currentLevel;
     StartButton startBtn;
+    float displayHP;
 
     Global()
         : xres(640), yres(480),
           mousex(320), mousey(240),
-          spacePressed(0), movSwitch(1), currentWeapon(0),
+          spacePressed(0), movSwitch(0), currentWeapon(0),
           weaponFrame(0), weaponTimer(0.0f),
           shipx(320.0f), shipy(160.0f),
           ShipSpeed(6.0f), shipAngle(0.0f),
           fps(0), playerHP(10), score(0),
           spawnTimer(0.0f), spawnInterval(2.0f),
           state(STATE_TITLE), levelIntroTimer(0.0f), currentLevel(1)
+         
     {
         memset(keys, 0, sizeof(keys));
+        displayHP = playerHP;
         for (int i = 0; i < MAX_BULLETS; i++)
             bullets[i].active = 0;
     }
@@ -260,10 +267,11 @@ static void upload_texture(GLuint *tex, Image *img) {
                  GL_RGBA, GL_UNSIGNED_BYTE, img->data);
 }
 
-static Image img_back, img_logo;
+static Image img_back, img_logo, img_rays;
 static Image img_ship01, img_shipSlight, img_shipMid, img_shipVery;
 static Image img_cannon, img_rockets, img_spaceGun, img_zapper;
 static Image img_bCannon, img_bRocket, img_bSpaceGun, img_bZapper;
+static Image img_health;
 
 void init_opengl();
 void check_mouse(XEvent *e);
@@ -353,6 +361,8 @@ void init_opengl()
     img_bRocket.load("./bullets/weapons_rocket.png");
     img_bSpaceGun.load("./bullets/weapons_spaceGun.png");
     img_bZapper.load("./bullets/weapons_zapper.png");
+    img_rays.load("./images/rays_sprite.png");
+    img_health.load("./images/health.png");
 
     upload_texture(&g.tex.backTex,       &img_back);
     upload_texture(&g.tex.logoTex,       &img_logo);
@@ -368,6 +378,9 @@ void init_opengl()
     upload_texture(&g.tex.bulletRocketTex,   &img_bRocket);
     upload_texture(&g.tex.bulletSpaceGunTex, &img_bSpaceGun);
     upload_texture(&g.tex.bulletZapperTex,   &img_bZapper);
+    upload_texture(&g.tex.raysTex, &img_rays);
+    upload_texture(&g.tex.healthTex, &img_health);
+
 
     g.tex.logoW = img_logo.width;
     g.tex.logoH = img_logo.height;
@@ -450,6 +463,47 @@ void title_render(const TitleAnim &t)
     float w  = maxW * ease,  h  = maxH * ease;
     float cx = g.xres / 2.0f, cy = g.yres / 2.0f;
 
+
+
+    int frame = (int)(g_time * 10.0f) % 14;
+    int row = 0;
+    int col = 0;
+
+    if (frame < 5) {
+        row = 0;
+        col = frame;
+    }
+    else if (frame < 10) {
+        row = 1;
+        col = frame - 5;
+    }
+    else {
+        row = 2;
+        col = frame - 10;
+    }
+
+    float cols = 5.0f;
+    float rows = 3.0f;
+
+    float fw = 1.0f / cols;
+    float fh = 1.0f / rows;
+
+    float tx0 = col * fw;
+    float tx1 = tx0 + fw;
+
+    float ty1 = 1.0f - row * fh;
+    float ty0 = ty1 - fh;
+
+    glBindTexture(GL_TEXTURE_2D, g.tex.raysTex);
+    glColor4f(1, 1, 1, 0.9f);
+
+    glBegin(GL_QUADS);
+        glTexCoord2f(tx0, ty1); glVertex2f(cx - w/2, cy - h/2);
+        glTexCoord2f(tx0, ty0); glVertex2f(cx - w/2, cy + h/2);
+        glTexCoord2f(tx1, ty0); glVertex2f(cx + w/2, cy + h/2);
+        glTexCoord2f(tx1, ty1); glVertex2f(cx + w/2, cy - h/2);
+    glEnd();
+
     glBindTexture(GL_TEXTURE_2D, g.tex.logoTex);
     glColor4f(1, 1, 1, 1);
     glBegin(GL_QUADS);
@@ -514,6 +568,21 @@ void renderLevelIntro()
     ggprint16(&r, 0, 0x00ffffff, buf);
 }
 
+static float getScaleX()
+{
+    return (float)g.xres / (float)VIRTUAL_W;
+}
+
+static float getScaleY()
+{
+    return (float)g.yres / (float)VIRTUAL_H;
+}
+
+static float getScale()
+{
+    return fminf(getScaleX(), getScaleY());
+}
+
 static const float FIRE_COOLDOWN       = 0.3f;
 static const float ANIM_SPEED_MULT     = 2.0f;
 static const float SHIP_COLLISION_RAD  = 22.0f;
@@ -523,6 +592,9 @@ void physics(float dt)
 {
     g.tex.yc[0] += 0.005f;
     g.tex.yc[1] += 0.005f;
+
+
+   // g.health =
 
     if (g.state == STATE_TITLE) {
         title_physics(g.title);
@@ -545,7 +617,7 @@ void physics(float dt)
 
     float rad    = g.shipAngle * (float)M_PI / 180.0f;
     float cosA   = cosf(rad), sinA = sinf(rad);
-    float rotSpd = 120.0f * dt;
+    float rotSpd = 600.0f * dt;
     float movSpd = g.ShipSpeed;
 
     float dx = 0, dy = 0;
@@ -730,11 +802,28 @@ void physics(float dt)
         }
         enemies_physics(g.shipx, g.shipy, g.xres, g.yres, dt);
     }
+
+    float speed = 5.0f; // higher = faster drain
+
+    if (g.displayHP > g.playerHP) {
+
+        g.displayHP -= speed * dt;
+        if (g.displayHP < g.playerHP)
+            g.displayHP = g.playerHP;
+    }
+    else if (g.displayHP < g.playerHP) {
+
+        g.displayHP += speed * dt;
+        if (g.displayHP > g.playerHP)
+            g.displayHP = g.playerHP;
+    }
 }
 
 void renderShip()
 {
-    float w = 60.0f, h = 60.0f;
+    float s = getScale();
+    float w = 60.0f * s;
+    float h = 60.0f * s;
 
     glColor4f(1, 1, 1, 1);
 
@@ -760,7 +849,7 @@ void renderShip()
 
     float tx0 = frameWidth * (float)g.weaponFrame;
     float tx1 = tx0 + frameWidth;
-    float ww  = 40.0f, hh = 40.0f;
+    float ww = 40.0f * s, hh = 40.0f * s;
 
     glPushMatrix();
     glTranslatef(g.shipx, g.shipy, 0);
@@ -795,7 +884,9 @@ void renderBullets()
         float tx0 = frameWidth * g.bullets[i].frame;
         float tx1 = tx0 + frameWidth;
         float x = g.bullets[i].x, y = g.bullets[i].y;
-        float bw = 20.0f, bh = 20.0f;
+        float s = getScale();
+        float bw = 20.0f * s;
+        float bh = 20.0f * s;
 
         glBindTexture(GL_TEXTURE_2D, tex);
 
@@ -803,7 +894,7 @@ void renderBullets()
             glPushMatrix();
             glTranslatef(x, y, 0);
             glRotatef(g.bullets[i].angle - 90.0f, 0, 0, 1);
-            float spacing = 10.0f;
+            float spacing = 10.0f * s;
             for (int j = 0; j < 4; j++) {
                 float off = (j - 1.5f) * spacing;
                 glBegin(GL_QUADS);
@@ -819,7 +910,7 @@ void renderBullets()
             glTranslatef(g.shipx, g.shipy, 0);
             glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
             float beamLen = (float)g.yres;
-            float beamW   = 40.0f;
+            float beamW   = 40.0f * s;
             glBegin(GL_QUADS);
                 glTexCoord2f(tx0,1); glVertex2f(-beamW/2, 0);
                 glTexCoord2f(tx0,0); glVertex2f(-beamW/2, beamLen);
@@ -842,6 +933,72 @@ void renderBullets()
     }
 }
 
+void renderHealthBar()
+{
+    float maxHP = 10.0f;
+    float target = g.playerHP;
+
+    g.displayHP += (target - g.displayHP) * 0.1f;
+
+    float hpRatio = (float)g.playerHP / maxHP;
+
+    hpRatio = g.displayHP / maxHP;
+
+    if (hpRatio < 0.0f) 
+        hpRatio = 0.0f;
+  
+    float s = getScale();
+    float w = 200.0f * s;
+    float h = 50.0f * s;
+
+    float x = g.xres - w - (20.0f * s);
+    float y = 20.0f * s;
+
+    float split = 0.57f; 
+
+    float contTexY0 = 0.0f;
+    float contTexY1 = split;
+
+    float barTexY0 = split;
+    float barTexY1 = 1.0f;
+
+    float yOffset = -4.5f; // move bar
+    float barOffset = w * 0.3f; 
+
+    glBindTexture(GL_TEXTURE_2D, g.tex.healthTex);
+    glColor4f(1,1,1,1);
+
+    // bar
+    glBegin(GL_QUADS);
+        glTexCoord2f(0.4f, barTexY1); glVertex2f(x + barOffset, y + yOffset);
+        glTexCoord2f(0.4f, barTexY0); glVertex2f(x + barOffset, y + h + yOffset);
+
+        glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY0);
+        glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + h + yOffset);
+
+        glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY1);
+        glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + yOffset);
+    glEnd();
+
+    // container
+    glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, contTexY1); glVertex2f(x, y);
+        glTexCoord2f(0.0f, contTexY0); glVertex2f(x, y + h);
+        glTexCoord2f(1.0f, contTexY0); glVertex2f(x + w, y + h);
+        glTexCoord2f(1.0f, contTexY1); glVertex2f(x + w, y);
+    glEnd();
+
+    char hpText[16];
+    snprintf(hpText, sizeof(hpText), "%d", g.playerHP);
+
+    Rect r;
+    r.bot = (int)(31.8f * s);
+    r.left = (int)(g.xres - 96 * s);     
+    r.center = 1;
+    ggprint16(&r, 0, 0x00ffffff, hpText);
+
+}
+
 static void renderHUD()
 {
     Rect r;
@@ -861,7 +1018,7 @@ static void renderHUD()
     ggprint12(&r, 2, 0x00ffffff, "fps: %i", g.fps);      r.bot -= 20;
 
     if (g.state == STATE_PLAYING) {
-        ggprint12(&r, 2, 0x00ffffff, "HP: %i", g.playerHP);  r.bot -= 20;
+      //  ggprint12(&r, 2, 0x00ffffff, "HP: %i", g.playerHP);  r.bot -= 20;
         ggprint12(&r, 2, 0x00ffffff, "Score: %i", g.score);
     }
 }
@@ -902,5 +1059,8 @@ void render()
         renderLevelIntro();
     }
 
+    if (g.state == STATE_PLAYING) 
+        renderHealthBar();
+    
     renderHUD();
 }
