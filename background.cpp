@@ -203,7 +203,7 @@ public:
           weaponFrame(0), weaponTimer(0.0f),
           shipx(320.0f), shipy(160.0f),
           ShipSpeed(6.0f), shipAngle(0.0f),
-          fps(0), playerHP(20), score(0),
+          fps(0), playerHP(100), score(0),
           spawnTimer(0.0f), spawnInterval(2.0f),
           state(STATE_TITLE), levelIntroTimer(0.0f), currentLevel(1)
     {
@@ -1002,19 +1002,19 @@ void physics(float dt)
     }
 
     // Timed powerup trigger
-    if (g.state == STATE_PLAYING) {
-        g.levelTimer += dt;
+   // if (g.state == STATE_PLAYING) {
+   //     g.levelTimer += dt;
 
-        if (g.levelTimer >= 5.5f) {
+   //     if (g.levelTimer >= 5.5f) {
 
-            g.levelTimer = 0.0f;
-            generatePowerups();
-            obstaclesReset();
-            for (int i = 0; i < MAX_BULLETS; i++)
-                g.bullets[i].active = 0;
-            g.state = STATE_POWERUP;
-        }
-    }
+   //         g.levelTimer = 0.0f;
+   //         generatePowerups();
+   //         obstaclesReset();
+   //         for (int i = 0; i < MAX_BULLETS; i++)
+   //             g.bullets[i].active = 0;
+   //         g.state = STATE_POWERUP;
+   //     }
+   // }
 
     // displayHP smooth animation
     float hpSpeed = 5.0f;
@@ -1181,7 +1181,7 @@ void renderBullets()
 
 void renderHealthBar()
 {
-    float maxHP = 10.0f;
+    float maxHP = 100.0f;
     float target = g.playerHP;
 
     g.displayHP += (target - g.displayHP) * 0.1f;
