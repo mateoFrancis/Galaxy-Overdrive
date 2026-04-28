@@ -16,6 +16,8 @@ int   g_yres = 480;
 float g_time  = 0.0f;
 
 #include "obstacles.cpp"
+//#include "enemy.cpp"
+//#include "enemy.h"
 
 #define MAX_BULLETS 50
 #define POWERUP_COUNT 11
@@ -26,7 +28,7 @@ enum GameState {
     STATE_TITLE,
     STATE_LEVEL_INTRO,
     STATE_PLAYING,
-    STATE_POWERUP
+    STATE_POWERUP 
 };
 
 class Image {
@@ -115,7 +117,7 @@ struct Bullet {
     float xVel, yVel;
     float vel;
     int   active;
-    int   damage;
+    int damage;
     int   type;
     int   frame;
     float frameTimer;
@@ -123,9 +125,12 @@ struct Bullet {
 };
 
 struct Powerups {
-    int  fireRateLevel;
-    int  speedLevel;
-    int  damageLevel;
+
+    int fireRateLevel; 
+    int speedLevel;    
+    int damageLevel;      
+
+    // toggles
     bool homing;
     bool pierce;
 };
@@ -167,11 +172,11 @@ public:
     float ShipSpeed;
     float shipAngle;
     int   fps;
-    int   paused;
+    int paused;
 
-    float levelTimer;
-    float powerupFill[2];
-    int   selectedPowerup;
+    float levelTimer; 
+    float powerupFill[2];   // fill progress for 2 boxes
+    int selectedPowerup;    // 0 or 1
 
     int   keys[512];
     Bullet bullets[MAX_BULLETS];
@@ -188,10 +193,13 @@ public:
     StartButton startBtn;
     float displayHP;
 
+
     Powerups powerups;
 
+    // powerup system
     int availablePowerups[16];
     int availableCount;
+
     int currentChoices[2];
 
     Global()
@@ -204,32 +212,31 @@ public:
           fps(0), playerHP(10), score(0),
           spawnTimer(0.0f), spawnInterval(2.0f),
           state(STATE_TITLE), levelIntroTimer(0.0f), currentLevel(1)
+         
     {
         memset(keys, 0, sizeof(keys));
         for (int i = 0; i < MAX_BULLETS; i++)
             bullets[i].active = 0;
+        
 
-        displayHP      = playerHP;
-        paused         = 0;
-        levelTimer     = 0.0f;
+        displayHP = playerHP;
+        paused = 0;
+        levelTimer = 0.0f;
         powerupFill[0] = 0.0f;
         powerupFill[1] = 0.0f;
         selectedPowerup = -1;
 
+        // init powerups
         powerups.fireRateLevel = 0;
         powerups.speedLevel    = 0;
         powerups.damageLevel   = 0;
         powerups.homing        = false;
         powerups.pierce        = false;
 
+        // pool setup
         availableCount = 0;
     }
 } g;
-
-// ============================================================
-//  levels.h must come AFTER Global g and GameState enum
-// ============================================================
-#include "levels.h"
 
 class X11_wrapper {
     Display  *dpy;
@@ -333,14 +340,13 @@ int main()
     init_enemies();
     obstaclesInit();
     initPowerups();
-    levelsInit();           // << initialise level system
 
-    // start on title hide all obstacles
+    // hide everything during title
     obstaclesRemoveAllAsteroids();
     obstaclesRemoveAllMines();
     for (int i = 0; i < OBS_BARRIER_COUNT; i++) obs_barriers[i].active = false;
     obs_turret.active = false;
-    obs_gate.active   = false;
+    obs_gate.active = false;
 
     int done = 0;
     struct timespec t0, t1;
@@ -376,8 +382,8 @@ int main()
         time_t now = time(NULL);
         if (now > secTimer) {
             secTimer = now;
-            g.fps    = nframes;
-            nframes  = 0;
+            g.fps = nframes;
+            nframes = 0;
         }
 
         x11.swapBuffers();
@@ -414,21 +420,22 @@ void init_opengl()
     img_bZapper.load("./bullets/weapons_zapper.png");
     img_health.load("./images/health.png");
 
-    upload_texture(&g.tex.backTex,           &img_back);
-    upload_texture(&g.tex.logoTex,           &img_logo);
-    upload_texture(&g.tex.ship01Tex,         &img_ship01);
-    upload_texture(&g.tex.shipSlightTex,     &img_shipSlight);
-    upload_texture(&g.tex.shipMidTex,        &img_shipMid);
-    upload_texture(&g.tex.shipVeryTex,       &img_shipVery);
-    upload_texture(&g.tex.cannonTex,         &img_cannon);
-    upload_texture(&g.tex.rocketsTex,        &img_rockets);
-    upload_texture(&g.tex.spaceGunTex,       &img_spaceGun);
-    upload_texture(&g.tex.zapperTex,         &img_zapper);
+    upload_texture(&g.tex.backTex,       &img_back);
+    upload_texture(&g.tex.logoTex,       &img_logo);
+    upload_texture(&g.tex.ship01Tex,     &img_ship01);
+    upload_texture(&g.tex.shipSlightTex, &img_shipSlight);
+    upload_texture(&g.tex.shipMidTex,    &img_shipMid);
+    upload_texture(&g.tex.shipVeryTex,   &img_shipVery);
+    upload_texture(&g.tex.cannonTex,     &img_cannon);
+    upload_texture(&g.tex.rocketsTex,    &img_rockets);
+    upload_texture(&g.tex.spaceGunTex,   &img_spaceGun);
+    upload_texture(&g.tex.zapperTex,     &img_zapper);
     upload_texture(&g.tex.bulletCannonTex,   &img_bCannon);
     upload_texture(&g.tex.bulletRocketTex,   &img_bRocket);
     upload_texture(&g.tex.bulletSpaceGunTex, &img_bSpaceGun);
     upload_texture(&g.tex.bulletZapperTex,   &img_bZapper);
-    upload_texture(&g.tex.healthTex,         &img_health);
+    upload_texture(&g.tex.healthTex, &img_health);
+
 
     g.tex.logoW = img_logo.width;
     g.tex.logoH = img_logo.height;
@@ -456,14 +463,11 @@ int check_keys(XEvent *e)
 
     int key = XLookupKeysym(&e->xkey, 0);
 
-    if (key >= 0 && key < 512)
+    if (key >= 0 && key < 512) {
         g.keys[key] = (e->type == KeyPress) ? 1 : 0;
+    }
 
     if (e->type == KeyPress) {
-        // Let levels.h consume pause-menu keys first
-        if (levelsHandleKey(key))
-            return 0;
-
         switch (key) {
             case XK_Escape: return 1;
 
@@ -480,26 +484,28 @@ int check_keys(XEvent *e)
                 break;
 
             case XK_k:
-                for (int i = 0; i < MAX_BULLETS; i++)
+
+                // clear zapper
+                for (int i = 0; i < MAX_BULLETS; i++) {
                     if (g.bullets[i].type == 3)
                         g.bullets[i].active = 0;
+                }
+
                 g.currentWeapon = (g.currentWeapon + 1) % 4;
-                g.weaponFrame   = 0;
-                g.weaponTimer   = 0.0f;
+                g.weaponFrame = 0;
+                g.weaponTimer = 0.0f;
                 break;
 
             case XK_r:
                 if (g.state == STATE_PLAYING) {
-                    obstaclesReset();
+                   obstaclesReset();
                     g.playerHP = 10;
                     g.score    = 0;
                 }
                 break;
-
+            
             case XK_p:
                 g.paused = !g.paused;
-                // close level-select panel whenever we un-pause manually
-                if (!g.paused) lv_selectOpen = false;
                 break;
         }
     }
@@ -509,84 +515,28 @@ int check_keys(XEvent *e)
 
     return 0;
 }
-
-// ============================================================
-//  Pause overlay fixed word alignment + level-select hint
-// ============================================================
 void renderPause()
 {
-    // ---- dark tint over the whole screen ----
     glDisable(GL_TEXTURE_2D);
-    glColor4f(0.f, 0.f, 0.f, 0.52f);
+
+    // dark tint
+    glColor4f(0, 0, 0, 0.5f);
     glBegin(GL_QUADS);
-        glVertex2f(0,      0);
+        glVertex2f(0, 0);
         glVertex2f(g.xres, 0);
         glVertex2f(g.xres, g.yres);
-        glVertex2f(0,      g.yres);
-    glEnd();
-    glEnable(GL_TEXTURE_2D);
-
-    // ---- centre panel ----
-    float pw = 340.f, ph = 200.f;
-    float px = (g.xres - pw) * 0.5f;
-    float py = (g.yres - ph) * 0.5f;
-
-    glDisable(GL_TEXTURE_2D);
-
-    // panel background
-    glColor4f(0.03f, 0.06f, 0.14f, 0.92f);
-    glBegin(GL_QUADS);
-        glVertex2f(px,    py);
-        glVertex2f(px+pw, py);
-        glVertex2f(px+pw, py+ph);
-        glVertex2f(px,    py+ph);
-    glEnd();
-
-    // panel border (pulsing blue)
-    float pulse = 0.5f + 0.5f * sinf(g_time * 2.5f);
-    glLineWidth(2.f);
-    glColor4f(0.25f + 0.4f*pulse, 0.55f + 0.3f*pulse, 1.f, 0.9f);
-    glBegin(GL_LINE_LOOP);
-        glVertex2f(px,    py);
-        glVertex2f(px+pw, py);
-        glVertex2f(px+pw, py+ph);
-        glVertex2f(px,    py+ph);
+        glVertex2f(0, g.yres);
     glEnd();
 
     glEnable(GL_TEXTURE_2D);
 
-    // ---- text lines, all center-aligned on the panel's x midpoint ----
-    int cx = g.xres / 2;
+    // text
     Rect r;
+    r.bot = g.yres / 2;
+    r.left = g.xres / 2;
     r.center = 1;
 
-    // "PAUSED" title near the top of the panel
-    r.left = cx;
-    r.bot  = (int)(py + ph - 40);
     ggprint16(&r, 0, 0x00ffffff, "PAUSED");
-
-    // divider row: current level name
-    r.bot -= 30;
-    ggprint12(&r, 0, 0x0088ffff, "%s  -  %s",
-              LEVEL_DEFS[lv_current].title,
-              LEVEL_DEFS[lv_current].subtitle);
-
-    // keybind reminder rows
-    r.bot -= 28;
-    ggprint12(&r, 0, 0x00aaaaaa, "P  -  Resume");
-
-    r.bot -= 20;
-    ggprint12(&r, 0, 0x00aaaaaa, "N  -  Next Level");
-
-    r.bot -= 20;
-    ggprint12(&r, 0, 0x00aaaaaa, "1-6  -  Jump to Level");
-
-    r.bot -= 20;
-    ggprint12(&r, 0, 0x00aaaaaa, "Esc  -  Quit");
-
-    // level-select hint at the very bottom of the panel
-    // (levelsRenderSelectMenu draws the full overlay when lv_selectOpen)
-    levelsRenderSelectMenu();
 }
 
 void title_physics(TitleAnim &t)
@@ -599,7 +549,7 @@ void title_render(const TitleAnim &t)
     float ease = t.timer * t.timer * (3.0f - 2.0f * t.timer);
     float maxW = g.xres * 0.6f;
     float maxH = maxW * ((float)g.tex.logoH / (float)g.tex.logoW);
-    float w  = maxW * ease, h  = maxH * ease;
+    float w  = maxW * ease,  h  = maxH * ease;
     float cx = g.xres / 2.0f, cy = g.yres / 2.0f;
 
     glBindTexture(GL_TEXTURE_2D, g.tex.logoTex);
@@ -616,8 +566,11 @@ void renderStartButton()
 {
     if (!g.startBtn.visible) return;
 
-    float x = g.startBtn.x, y = g.startBtn.y;
-    float w = g.startBtn.w, h = g.startBtn.h;
+    float x = g.startBtn.x;
+    float y = g.startBtn.y;
+    float w = g.startBtn.w;
+    float h = g.startBtn.h;
+
     float pulse = 0.5f + 0.5f * sinf(g_time * 3.0f);
 
     glDisable(GL_TEXTURE_2D);
@@ -631,7 +584,7 @@ void renderStartButton()
     glEnd();
 
     glLineWidth(3.0f);
-    glColor4f(0.4f + 0.6f*pulse, 0.8f + 0.2f*pulse, 1.0f, 1.0f);
+    glColor4f(0.4f + 0.6f * pulse, 0.8f + 0.2f * pulse, 1.0f, 1.0f);
     glBegin(GL_LINE_LOOP);
         glVertex2f(x - w/2, y - h/2);
         glVertex2f(x + w/2, y - h/2);
@@ -653,22 +606,30 @@ void renderLevelIntro()
     float cx = g.xres / 2.0f;
     float cy = g.yres / 2.0f;
 
-    const LevelDesc &ld = LEVEL_DEFS[lv_current];
+    char buf[32];
+    snprintf(buf, sizeof(buf), "LEVEL %d", g.currentLevel);
 
     Rect r;
-    r.center = 1;
+    r.bot    = (int)(cy - 8);
     r.left   = (int)cx;
-
-    r.bot = (int)(cy + 16);
-    ggprint16(&r, 0, 0x00ffffff, "%s", ld.title);
-
-    r.bot = (int)(cy - 16);
-    ggprint12(&r, 0, 0x0088ffff, "%s", ld.subtitle);
+    r.center = 1;
+    ggprint16(&r, 0, 0x00ffffff, buf);
 }
 
-static float getScaleX() { return (float)g.xres / (float)VIRTUAL_W; }
-static float getScaleY() { return (float)g.yres / (float)VIRTUAL_H; }
-static float getScale()  { return fminf(getScaleX(), getScaleY()); }
+static float getScaleX()
+{
+    return (float)g.xres / (float)VIRTUAL_W;
+}
+
+static float getScaleY()
+{
+    return (float)g.yres / (float)VIRTUAL_H;
+}
+
+static float getScale()
+{
+    return fminf(getScaleX(), getScaleY());
+}
 
 static const float FIRE_COOLDOWN       = 0.3f;
 static const float ANIM_SPEED_MULT     = 2.0f;
@@ -692,6 +653,7 @@ const char* POWERUPS[] = {
 void initPowerups()
 {
     g.availableCount = POWERUP_COUNT;
+
     for (int i = 0; i < POWERUP_COUNT; i++)
         g.availablePowerups[i] = i;
 }
@@ -699,11 +661,16 @@ void initPowerups()
 bool isPowerupUnlocked(int id)
 {
     switch (id) {
+        // Fire Rate++
         case 1: return g.powerups.fireRateLevel >= 1;
-        case 3: return g.powerups.speedLevel    >= 1;
-        case 5: return g.powerups.damageLevel   >= 1;
+
+        // Speed++
+        case 3: return g.powerups.speedLevel >= 1;
+
+        // Damage++
+        case 5: return g.powerups.damageLevel >= 1;
     }
-    return true;
+    return true; // everything else always allowed
 }
 
 void generatePowerups()
@@ -711,23 +678,29 @@ void generatePowerups()
     int validPool[16];
     int validCount = 0;
 
+    // filter allowed powerups
     for (int i = 0; i < g.availableCount; i++) {
         int id = g.availablePowerups[i];
-        if (isPowerupUnlocked(id))
+        if (isPowerupUnlocked(id)) {
             validPool[validCount++] = id;
+        }
     }
     if (validCount == 0) {
-        g.currentChoices[0] = g.currentChoices[1] = -1;
+        g.currentChoices[0] = -1;
+        g.currentChoices[1] = -1;
         return;
     }
     if (validCount == 1) {
-        g.currentChoices[0] = g.currentChoices[1] = validPool[0];
+        g.currentChoices[0] = validPool[0];
+        g.currentChoices[1] = validPool[0];
         return;
     }
     for (int i = 0; i < 2; i++) {
         int r = rand() % validCount;
         g.currentChoices[i] = validPool[r];
-        validPool[r] = validPool[--validCount];
+
+        validPool[r] = validPool[validCount - 1];
+        validCount--;
     }
 }
 
@@ -735,32 +708,45 @@ void pickPowerup(int choiceIndex)
 {
     int id = g.currentChoices[choiceIndex];
 
+    // turn powerup on
     switch (id) {
-        case 0:  g.powerups.fireRateLevel += 1; break;
-        case 1:  g.powerups.fireRateLevel += 2; break;
-        case 2:  g.powerups.speedLevel    += 1; break;
-        case 3:  g.powerups.speedLevel    += 2; break;
-        case 4:  g.powerups.damageLevel   += 1; break;
-        case 5:  g.powerups.damageLevel   += 2; break;
-        case 6:  g.powerups.homing  = true;     break;
-        case 7:  g.powerups.pierce  = true;     break;
-        case 8:  g.currentWeapon = 3;           break;
-        case 9:  g.currentWeapon = 2;           break;
-        case 10: g.currentWeapon = 1;           break;
+
+        case 0: g.powerups.fireRateLevel += 1; break;
+        case 1: g.powerups.fireRateLevel += 2; break;
+
+        case 2: g.powerups.speedLevel += 1; break;
+        case 3: g.powerups.speedLevel += 2; break;
+
+        case 4: g.powerups.damageLevel += 1; break;
+        case 5: g.powerups.damageLevel += 2; break;
+
+        case 6: g.powerups.homing = true; break;
+        case 7: g.powerups.pierce = true; break;
+
+        case 8: g.currentWeapon = 3; break;
+        case 9: g.currentWeapon = 2; break;
+        case 10: g.currentWeapon = 1; break;
     }
 
+    // remove from options
     for (int i = 0; i < g.availableCount; i++) {
         if (g.availablePowerups[i] == id) {
-            g.availablePowerups[i] = g.availablePowerups[--g.availableCount];
+            g.availablePowerups[i] = g.availablePowerups[g.availableCount - 1];
+            g.availableCount--;
             break;
         }
     }
 }
 
+//const int POWERUP_COUNT = 6;
+
 void physics(float dt)
 {
     g.tex.yc[0] += 0.005f;
     g.tex.yc[1] += 0.005f;
+
+
+   // g.health =
 
     if (g.state == STATE_TITLE) {
         title_physics(g.title);
@@ -773,13 +759,14 @@ void physics(float dt)
     }
 
     if (g.state == STATE_LEVEL_INTRO) {
+
         g.levelIntroTimer += dt;
+
         if (g.levelIntroTimer >= 2.0f) {
-            g.state           = STATE_PLAYING;
+            
+            g.state = STATE_PLAYING;
             g.levelIntroTimer = 0.0f;
-            // Load the level matching lv_current (set by levelsHandleKey or
-            // the powerup path that increments g.currentLevel)
-            lv_loadLevel(lv_current);
+            obstaclesReset();
         }
     }
 
@@ -818,19 +805,21 @@ void physics(float dt)
                     (g.currentWeapon == 2) ? 12 : 14;
 
     if (g.spacePressed && g.currentWeapon != 3) {
+
+       // float fireCooldown = FIRE_COOLDOWN / (1.0f + 0.25f * g.powerups.fireRateLevel);
         if (g.weaponTimer >= fireCooldown) {
             g.weaponTimer = 0.0f;
             for (int i = 0; i < MAX_BULLETS; i++) {
                 if (!g.bullets[i].active) {
-                    g.bullets[i].active     = 1;
-                    g.bullets[i].type       = g.currentWeapon;
-                    g.bullets[i].damage     = 1 + g.powerups.damageLevel;
-                    g.bullets[i].x          = g.shipx;
-                    g.bullets[i].y          = g.shipy;
-                    g.bullets[i].vel        = 10.0f;
-                    g.bullets[i].frame      = 0;
-                    g.bullets[i].frameTimer = 0.0f;
-                    g.bullets[i].angle      = g.shipAngle;
+                    g.bullets[i].active    = 1;
+                    g.bullets[i].type      = g.currentWeapon;
+                    g.bullets[i].damage = 1 + g.powerups.damageLevel;
+                    g.bullets[i].x         = g.shipx;
+                    g.bullets[i].y         = g.shipy;
+                    g.bullets[i].vel       = 10.0f;
+                    g.bullets[i].frame     = 0;
+                    g.bullets[i].frameTimer= 0.0f;
+                    g.bullets[i].angle     = g.shipAngle;
                     float rb = g.shipAngle * (float)M_PI / 180.0f;
                     g.bullets[i].xVel = cosf(rb) * g.bullets[i].vel;
                     g.bullets[i].yVel = sinf(rb) * g.bullets[i].vel;
@@ -858,7 +847,7 @@ void physics(float dt)
                         g.bullets[i].x = g.shipx; g.bullets[i].y = g.shipy;
                         g.bullets[i].angle = g.shipAngle;
                         g.bullets[i].frame = 0; g.bullets[i].frameTimer = 0;
-                        g.bullets[i].xVel  = 0; g.bullets[i].yVel  = 0;
+                        g.bullets[i].xVel = 0; g.bullets[i].yVel = 0;
                         break;
                     }
                 }
@@ -886,24 +875,39 @@ void physics(float dt)
             g.bullets[i].y >= 0 && g.bullets[i].y <= g.yres;
 
         if (g.powerups.homing && g.bullets[i].type != 3 && onScreen) {
+        
             float tx, ty;
             if (find_nearest_enemy(g.bullets[i].x, g.bullets[i].y, tx, ty) >= 0) {
+            
                 float vx = g.bullets[i].xVel;
                 float vy = g.bullets[i].yVel;
+            
                 float currentAngle = atan2f(vy, vx);
-                float ddx = tx - g.bullets[i].x;
-                float ddy = ty - g.bullets[i].y;
-                float targetAngle = atan2f(ddy, ddx);
+            
+                // direction
+                float dx = tx - g.bullets[i].x;
+                float dy = ty - g.bullets[i].y;
+                float targetAngle = atan2f(dy, dx);
+            
+                // angle
                 float diff = targetAngle - currentAngle;
-                while (diff >  M_PI) diff -= 2.0f * M_PI;
+            
+                while (diff > M_PI)  diff -= 2.0f * M_PI;
                 while (diff < -M_PI) diff += 2.0f * M_PI;
+            
+                // turn speed
                 float turnSpeed = 0.05f;
-                if (diff >  turnSpeed) diff =  turnSpeed;
+            
+                if (diff > turnSpeed)  diff = turnSpeed;
                 if (diff < -turnSpeed) diff = -turnSpeed;
+            
+                // rotate bullets
                 float newAngle = currentAngle + diff;
+            
                 float speed = g.bullets[i].vel;
-                g.bullets[i].xVel  = cosf(newAngle) * speed;
-                g.bullets[i].yVel  = sinf(newAngle) * speed;
+            
+                g.bullets[i].xVel = cosf(newAngle) * speed;
+                g.bullets[i].yVel = sinf(newAngle) * speed;
                 g.bullets[i].angle = newAngle * 180.0f / M_PI;
             }
         }
@@ -912,9 +916,10 @@ void physics(float dt)
         if (t != 3 &&
             (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
              g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20)) {
-            if (!g.powerups.pierce)
-                g.bullets[i].active = 0;
-        }
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
+
+             }
 
         if (!g.bullets[i].active) continue;
 
@@ -927,11 +932,9 @@ void physics(float dt)
         if (g.state == STATE_TITLE && g.startBtn.visible) {
             if (g.startBtn.contains(g.bullets[i].x, g.bullets[i].y)) {
                 g.bullets[i].active = 0;
-                g.startBtn.visible  = false;
-                g.state             = STATE_LEVEL_INTRO;
-                g.levelIntroTimer   = 0.0f;
-                // always start at level 1
-                lv_current = 0;
+                g.startBtn.visible = false;
+                g.state = STATE_LEVEL_INTRO;
+                g.levelIntroTimer = 0.0f;
                 continue;
             }
         }
@@ -940,7 +943,8 @@ void physics(float dt)
             int hit = obstaclesCheckBulletAsteroid(
                 g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (hit >= 0) {
-                if (!g.powerups.pierce) g.bullets[i].active = 0;
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
                 g.score += 10;
                 continue;
             }
@@ -948,14 +952,16 @@ void physics(float dt)
             int bHit = obstaclesCheckBulletBarrier(
                 g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (bHit >= 0) {
-                if (!g.powerups.pierce) g.bullets[i].active = 0;
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
                 continue;
             }
 
             int eHit = enemy_check_bullet_hit(
                 g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (eHit >= 0) {
-                if (!g.powerups.pierce) g.bullets[i].active = 0;
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
                 g.score += 15;
                 continue;
             }
@@ -963,33 +969,38 @@ void physics(float dt)
     }
 
     if (g.state == STATE_PLAYING) {
+        // asteroid and ship both damage and explode
         int astDmg = obstaclesCheckPlayerAsteroid(g.shipx, g.shipy, SHIP_COLLISION_RAD);
-        if (astDmg > 0)
+        if (astDmg > 0) {
             g.playerHP = fmaxf(0, g.playerHP - astDmg);
+        }
 
         int mineHit = obstaclesCheckPlayerMine(g.shipx, g.shipy, SHIP_COLLISION_RAD);
-        if (mineHit >= 0)
+        if (mineHit >= 0) {
             g.playerHP = fmaxf(0, g.playerHP - 2);
+        }
 
-        if (obstaclesCheckTurretHitsPlayer(g.shipx, g.shipy, SHIP_COLLISION_RAD))
+        if (obstaclesCheckTurretHitsPlayer(g.shipx, g.shipy, SHIP_COLLISION_RAD)) {
             g.playerHP = fmaxf(0, g.playerHP - 1);
+        }
 
         if (obstaclesCheckPlayerBarrier(g.shipx, g.shipy, SHIP_COLLISION_RAD) >= 0) {
             g.shipx -= dx; g.shipy -= dy;
         }
 
+        // warp gate sends ship to random screen location
         float warpX, warpY;
         if (obstaclesCheckWarpGate(g.shipx, g.shipy, &warpX, &warpY)) {
-            g.shipx  = warpX;
-            g.shipy  = warpY;
+            g.shipx = warpX;
+            g.shipy = warpY;
             g.score += 50;
         }
 
-        if (enemy_check_player_collision(g.shipx, g.shipy, SHIP_COLLISION_RAD))
+        if (enemy_check_player_collision(g.shipx, g.shipy, SHIP_COLLISION_RAD)) {
             g.playerHP = fmaxf(0, g.playerHP - 1);
+        }
 
         obstaclesUpdate(dt, g.shipx, g.shipy);
-        levelsUpdate(dt);       // << level system tick
 
         g.spawnTimer += dt;
         if (g.spawnTimer >= g.spawnInterval) {
@@ -999,66 +1010,84 @@ void physics(float dt)
         enemies_physics(g.shipx, g.shipy, g.xres, g.yres, dt);
     }
 
-    // Timed powerup trigger
     if (g.state == STATE_PLAYING) {
+        
         g.levelTimer += dt;
 
         if (g.levelTimer >= 5.5f) {
             g.levelTimer = 0.0f;
+
             generatePowerups();
-            obstaclesReset();
+            // clear objects
+            obstaclesReset(); //////////////////
             for (int i = 0; i < MAX_BULLETS; i++)
                 g.bullets[i].active = 0;
-            g.state = STATE_POWERUP;
+
+            g.state = STATE_POWERUP; ////////////////////
         }
     }
 
-    // displayHP smooth animation
-    float hpSpeed = 5.0f;
+    float speed = 5.0f;
+
     if (g.displayHP > g.playerHP) {
-        g.displayHP -= hpSpeed * dt;
-        if (g.displayHP < g.playerHP) g.displayHP = g.playerHP;
-    } else if (g.displayHP < g.playerHP) {
-        g.displayHP += hpSpeed * dt;
-        if (g.displayHP > g.playerHP) g.displayHP = g.playerHP;
+
+        g.displayHP -= speed * dt;
+        if (g.displayHP < g.playerHP)
+            g.displayHP = g.playerHP;
+    }
+    else if (g.displayHP < g.playerHP) {
+
+        g.displayHP += speed * dt;
+        if (g.displayHP > g.playerHP)
+            g.displayHP = g.playerHP;
     }
 
     if (g.state == STATE_POWERUP) {
+
+        float px = g.shipx;
+        float py = g.shipy;
+
+        // box settings
         float boxW = 200.0f;
         float boxH = g.yres * 0.6f;
         float gap  = 140.0f;
-        float cx   = g.xres / 2.0f;
-        float cy   = g.yres / 2.0f;
-        float totalW  = boxW * 2 + gap;
+
+        float cx = g.xres / 2.0f;
+        float cy = g.yres / 2.0f;
+
+        float totalW = boxW * 2 + gap;
+
         float boxesX[2] = {
             cx - totalW/2 + boxW/2,
             cx + totalW/2 - boxW/2
         };
+        float boxesY = cy;
 
         for (int i = 0; i < 2; i++) {
+
             bool inside =
-                g.shipx > boxesX[i] - boxW/2 && g.shipx < boxesX[i] + boxW/2 &&
-                g.shipy > cy - boxH/2        && g.shipy < cy + boxH/2;
+                px > boxesX[i] - boxW/2 && px < boxesX[i] + boxW/2 &&
+                py > boxesY - boxH/2 && py < boxesY + boxH/2;
 
             if (inside) {
+
                 g.powerupFill[i] += dt / 2.5f;
-                if (g.powerupFill[i] > 1.0f) g.powerupFill[i] = 1.0f;
+                if (g.powerupFill[i] > 1.0f)
+                    g.powerupFill[i] = 1.0f;
 
                 if (g.powerupFill[i] >= 1.0f) {
+
                     g.selectedPowerup = i;
                     pickPowerup(i);
 
-                    // advance to next level
-                    lv_current = (lv_current + 1) % TOTAL_LEVELS;
+                    g.state = STATE_LEVEL_INTRO;
                     g.currentLevel++;
-
-                    g.state           = STATE_LEVEL_INTRO;
-                    g.levelIntroTimer = 0.0f;
-                    g.powerupFill[0]  = g.powerupFill[1] = 0.0f;
+                    g.powerupFill[0] = g.powerupFill[1] = 0.0f;
                 }
             } else {
                 g.powerupFill[i] -= dt * 0.5f;
-                if (g.powerupFill[i] < 0.0f) g.powerupFill[i] = 0.0f;
+                if (g.powerupFill[i] < 0.0f)
+                    g.powerupFill[i] = 0.0f;
             }
         }
     }
@@ -1075,6 +1104,7 @@ void renderShip()
     glPushMatrix();
     glTranslatef(g.shipx, g.shipy, 0);
     glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
+
     glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
     glBegin(GL_QUADS);
         glTexCoord2f(0,1); glVertex2f(-w/2, -h/2);
@@ -1129,7 +1159,8 @@ void renderBullets()
         float tx1 = tx0 + frameWidth;
         float x = g.bullets[i].x, y = g.bullets[i].y;
         float s = getScale();
-        float bw = 20.0f * s, bh = 20.0f * s;
+        float bw = 20.0f * s;
+        float bh = 20.0f * s;
 
         glBindTexture(GL_TEXTURE_2D, tex);
 
@@ -1152,8 +1183,10 @@ void renderBullets()
             glPushMatrix();
             glTranslatef(g.shipx, g.shipy, 0);
             glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
-            float beamLen = sqrtf((float)(g.xres*g.xres + g.yres*g.yres));
+
+            float beamLen = sqrtf(g.xres * g.xres + g.yres * g.yres);
             float beamW   = 40.0f * s;
+            
             glBegin(GL_QUADS);
                 glTexCoord2f(tx0,1); glVertex2f(-beamW/2, 0);
                 glTexCoord2f(tx0,0); glVertex2f(-beamW/2, beamLen);
@@ -1178,49 +1211,68 @@ void renderBullets()
 
 void renderHealthBar()
 {
-    float maxHP  = 10.0f;
-    float hpRatio = g.displayHP / maxHP;
-    if (hpRatio < 0.0f) hpRatio = 0.0f;
+    float maxHP = 10.0f;
+    float target = g.playerHP;
 
+    g.displayHP += (target - g.displayHP) * 0.1f;
+
+    float hpRatio = (float)g.playerHP / maxHP;
+
+    hpRatio = g.displayHP / maxHP;
+
+    if (hpRatio < 0.0f) 
+        hpRatio = 0.0f;
+  
     float s = getScale();
-    float w = 200.0f * s, h = 50.0f * s;
+    float w = 200.0f * s;
+    float h = 50.0f * s;
+
     float x = g.xres - w - (20.0f * s);
     float y = 20.0f * s;
 
-    float split    = 0.57f;
-    float yOffset  = -4.5f;
-    float barOffset= w * 0.3f;
+    float split = 0.57f; 
+
+    float contTexY0 = 0.0f;
+    float contTexY1 = split;
+
+    float barTexY0 = split;
+    float barTexY1 = 1.0f;
+
+    float yOffset = -4.5f; // move bar
+    float barOffset = w * 0.3f; 
 
     glBindTexture(GL_TEXTURE_2D, g.tex.healthTex);
     glColor4f(1,1,1,1);
 
-    // bar fill
+    // bar
     glBegin(GL_QUADS);
-        glTexCoord2f(0.4f, split);
-        glVertex2f(x + barOffset, y + yOffset);
-        glTexCoord2f(0.4f, 0.0f);
-        glVertex2f(x + barOffset, y + h + yOffset);
-        glTexCoord2f(0.4f + 0.5f * (g.displayHP / maxHP), 0.0f);
+        glTexCoord2f(0.4f, barTexY1); glVertex2f(x + barOffset, y + yOffset);
+        glTexCoord2f(0.4f, barTexY0); glVertex2f(x + barOffset, y + h + yOffset);
+
+        glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY0);
         glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + h + yOffset);
-        glTexCoord2f(0.4f + 0.5f * (g.displayHP / maxHP), split);
+
+        glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY1);
         glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + yOffset);
     glEnd();
 
-    // container overlay
+    // container
     glBegin(GL_QUADS);
-        glTexCoord2f(0.0f, split); glVertex2f(x,   y);
-        glTexCoord2f(0.0f, 0.0f); glVertex2f(x,   y + h);
-        glTexCoord2f(1.0f, 0.0f); glVertex2f(x+w, y + h);
-        glTexCoord2f(1.0f, split); glVertex2f(x+w, y);
+        glTexCoord2f(0.0f, contTexY1); glVertex2f(x, y);
+        glTexCoord2f(0.0f, contTexY0); glVertex2f(x, y + h);
+        glTexCoord2f(1.0f, contTexY0); glVertex2f(x + w, y + h);
+        glTexCoord2f(1.0f, contTexY1); glVertex2f(x + w, y);
     glEnd();
 
     char hpText[16];
     snprintf(hpText, sizeof(hpText), "%d", g.playerHP);
+
     Rect r;
-    r.bot    = (int)(31.8f * s);
-    r.left   = (int)(g.xres - 96 * s);
+    r.bot = (int)(31.8f * s);
+    r.left = (int)(g.xres - 96 * s);     
     r.center = 1;
     ggprint16(&r, 0, 0x00ffffff, hpText);
+
 }
 
 static void renderPowerups()
@@ -1228,8 +1280,10 @@ static void renderPowerups()
     float boxW = 200.0f;
     float boxH = g.yres * 0.6f;
     float gap  = 40.0f;
-    float cx   = g.xres / 2.0f;
-    float cy   = g.yres / 2.0f;
+
+    float cx = g.xres / 2.0f;
+    float cy = g.yres / 2.0f;
+
     float totalW = boxW * 2 + gap;
 
     float boxesX[2] = {
@@ -1238,23 +1292,24 @@ static void renderPowerups()
     };
 
     const char* names[2] = {
-        (g.currentChoices[0] >= 0) ? POWERUPS[g.currentChoices[0]] : "None",
-        (g.currentChoices[1] >= 0) ? POWERUPS[g.currentChoices[1]] : "None"
+        POWERUPS[g.currentChoices[0]],
+        POWERUPS[g.currentChoices[1]]
     };
 
     for (int i = 0; i < 2; i++) {
-        float x    = boxesX[i];
-        float y    = cy;
+
+        float x = boxesX[i];
+        float y = cy;
         float fill = g.powerupFill[i];
 
-        float rC = (i == 0) ? 0.2f : 0.2f;
-        float gC = (i == 0) ? 0.6f : 0.9f;
-        float bC = (i == 0) ? 1.0f : 0.2f;
+        float r = (i == 0) ? 0.2f : 0.2f;
+        float gC= (i == 0) ? 0.6f : 0.9f;
+        float b = (i == 0) ? 1.0f : 0.2f;
 
         glDisable(GL_TEXTURE_2D);
 
         glLineWidth(3.0f);
-        glColor4f(rC, gC, bC, 1.0f);
+        glColor4f(r, gC, b, 1.0f);
         glBegin(GL_LINE_LOOP);
             glVertex2f(x - boxW/2, y - boxH/2);
             glVertex2f(x + boxW/2, y - boxH/2);
@@ -1262,7 +1317,8 @@ static void renderPowerups()
             glVertex2f(x - boxW/2, y + boxH/2);
         glEnd();
 
-        glColor4f(rC, gC, bC, 0.35f);
+        // fill from bottom to top
+        glColor4f(r, gC, b, 0.35f);
         glBegin(GL_QUADS);
             glVertex2f(x - boxW/2, y - boxH/2);
             glVertex2f(x + boxW/2, y - boxH/2);
@@ -1273,8 +1329,8 @@ static void renderPowerups()
         glEnable(GL_TEXTURE_2D);
 
         Rect rText;
-        rText.bot    = (int)(y - 8);
-        rText.left   = (int)x;
+        rText.bot = y - 8;
+        rText.left = x;
         rText.center = 1;
         ggprint16(&rText, 0, 0x00ffffff, names[i]);
     }
@@ -1287,19 +1343,20 @@ static void renderHUD()
     r.left   = 10;
     r.center = 0;
 
-    ggprint12(&r, 2, 0x00ffffff, "K - switch weapon");   r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");     r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "P - pause");            r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "WASD - movement");      r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "M - alt move (W+Mouse)"); r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "K - switch weapon");  r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "P - pause");  r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "WASD - movement");    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "M - alt movement (W + Mouse)");   r.bot -= 20;
 
     if (g.state == STATE_PLAYING) {
         ggprint12(&r, 2, 0x00ffffff, "R - reset obstacles"); r.bot -= 20;
     }
 
-    ggprint12(&r, 2, 0x00ffffff, "fps: %i", g.fps); r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "fps: %i", g.fps);      r.bot -= 20;
 
     if (g.state == STATE_PLAYING) {
+      //  ggprint12(&r, 2, 0x00ffffff, "HP: %i", g.playerHP);  r.bot -= 20;
         ggprint12(&r, 2, 0x00ffffff, "Score: %i", g.score);
     }
 }
@@ -1309,13 +1366,12 @@ void render()
     glClear(GL_COLOR_BUFFER_BIT);
     glColor4f(1, 1, 1, 1);
 
-    // scrolling starfield background
     glBindTexture(GL_TEXTURE_2D, g.tex.backTex);
     glBegin(GL_QUADS);
-        glTexCoord2f(g.tex.xc[0], g.tex.yc[1]); glVertex2i(0,      0);
-        glTexCoord2f(g.tex.xc[0], g.tex.yc[0]); glVertex2i(0,      g.yres);
-        glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres, g.yres);
-        glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres, 0);
+        glTexCoord2f(g.tex.xc[0], g.tex.yc[1]); glVertex2i(0,       0);
+        glTexCoord2f(g.tex.xc[0], g.tex.yc[0]); glVertex2i(0,       g.yres);
+        glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres,  g.yres);
+        glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres,  0);
     glEnd();
 
     if (g.state == STATE_TITLE) {
@@ -1337,17 +1393,17 @@ void render()
     renderShip();
     renderBullets();
 
-    if (g.state == STATE_LEVEL_INTRO)
+    if (g.state == STATE_LEVEL_INTRO) {
         renderLevelIntro();
-
-    if (g.state == STATE_PLAYING) {
-        renderHealthBar();
-        levelsRenderHUD();          // << level chip top-centre
     }
 
-    if (g.state == STATE_POWERUP)
+    if (g.state == STATE_PLAYING) 
+        renderHealthBar();
+    
+    if (g.state == STATE_POWERUP) {
         renderPowerups();
-
+       // return;
+    }
+    
     renderHUD();
 }
-
