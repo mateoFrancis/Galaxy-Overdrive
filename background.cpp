@@ -20,13 +20,15 @@ float g_time  = 0.0f;
 //#include "enemy.h"
 
 #define MAX_BULLETS 50
+#define POWERUP_COUNT 11
 const int VIRTUAL_W = 640;
 const int VIRTUAL_H = 480;
 
 enum GameState {
     STATE_TITLE,
     STATE_LEVEL_INTRO,
-    STATE_PLAYING
+    STATE_PLAYING,
+    STATE_POWERUP 
 };
 
 class Image {
@@ -115,10 +117,22 @@ struct Bullet {
     float xVel, yVel;
     float vel;
     int   active;
+    int damage;
     int   type;
     int   frame;
     float frameTimer;
     float angle;
+};
+
+struct Powerups {
+
+    int fireRateLevel; 
+    int speedLevel;    
+    int damageLevel;      
+
+    // toggles
+    bool homing;
+    bool pierce;
 };
 
 struct TitleAnim {
@@ -160,6 +174,10 @@ public:
     int   fps;
     int paused;
 
+    float levelTimer; 
+    float powerupFill[2];   // fill progress for 2 boxes
+    int selectedPowerup;    // 0 or 1
+
     int   keys[512];
     Bullet bullets[MAX_BULLETS];
 
@@ -175,6 +193,15 @@ public:
     StartButton startBtn;
     float displayHP;
 
+
+    Powerups powerups;
+
+    // powerup system
+    int availablePowerups[16];
+    int availableCount;
+
+    int currentChoices[2];
+
     Global()
         : xres(640), yres(480),
           mousex(320), mousey(240),
@@ -188,10 +215,26 @@ public:
          
     {
         memset(keys, 0, sizeof(keys));
-        displayHP = playerHP;
-        paused = 0;
         for (int i = 0; i < MAX_BULLETS; i++)
             bullets[i].active = 0;
+        
+
+        displayHP = playerHP;
+        paused = 0;
+        levelTimer = 0.0f;
+        powerupFill[0] = 0.0f;
+        powerupFill[1] = 0.0f;
+        selectedPowerup = -1;
+
+        // init powerups
+        powerups.fireRateLevel = 0;
+        powerups.speedLevel    = 0;
+        powerups.damageLevel   = 0;
+        powerups.homing        = false;
+        powerups.pierce        = false;
+
+        // pool setup
+        availableCount = 0;
     }
 } g;
 
@@ -287,12 +330,16 @@ void title_physics(TitleAnim &t);
 void renderStartButton();
 void renderLevelIntro();
 void renderPause();
+void initPowerups();
+void generatePowerups();
+void pickPowerup(int id);
 
 int main()
 {
     init_opengl();
     init_enemies();
     obstaclesInit();
+    initPowerups();
 
     // hide everything during title
     obstaclesRemoveAllAsteroids();
@@ -451,7 +498,7 @@ int check_keys(XEvent *e)
 
             case XK_r:
                 if (g.state == STATE_PLAYING) {
-                    obstaclesReset();
+                   obstaclesReset();
                     g.playerHP = 10;
                     g.score    = 0;
                 }
@@ -589,6 +636,110 @@ static const float ANIM_SPEED_MULT     = 2.0f;
 static const float SHIP_COLLISION_RAD  = 22.0f;
 static const float BULLET_COLLISION_RAD= 8.0f;
 
+const char* POWERUPS[] = {
+    "Fire Rate+",
+    "Fire Rate++",
+    "Speed+",
+    "Speed++",
+    "Damage+",
+    "Damage++",
+    "Homing Tech",
+    "Piercing Tech",
+    "Zapper",
+    "Space Gun",
+    "Rockets"
+};
+
+void initPowerups()
+{
+    g.availableCount = POWERUP_COUNT;
+
+    for (int i = 0; i < POWERUP_COUNT; i++)
+        g.availablePowerups[i] = i;
+}
+
+bool isPowerupUnlocked(int id)
+{
+    switch (id) {
+        // Fire Rate++
+        case 1: return g.powerups.fireRateLevel >= 1;
+
+        // Speed++
+        case 3: return g.powerups.speedLevel >= 1;
+
+        // Damage++
+        case 5: return g.powerups.damageLevel >= 1;
+    }
+    return true; // everything else always allowed
+}
+
+void generatePowerups()
+{
+    int validPool[16];
+    int validCount = 0;
+
+    // filter allowed powerups
+    for (int i = 0; i < g.availableCount; i++) {
+        int id = g.availablePowerups[i];
+        if (isPowerupUnlocked(id)) {
+            validPool[validCount++] = id;
+        }
+    }
+    if (validCount == 0) {
+        g.currentChoices[0] = -1;
+        g.currentChoices[1] = -1;
+        return;
+    }
+    if (validCount == 1) {
+        g.currentChoices[0] = validPool[0];
+        g.currentChoices[1] = validPool[0];
+        return;
+    }
+    for (int i = 0; i < 2; i++) {
+        int r = rand() % validCount;
+        g.currentChoices[i] = validPool[r];
+
+        validPool[r] = validPool[validCount - 1];
+        validCount--;
+    }
+}
+
+void pickPowerup(int choiceIndex)
+{
+    int id = g.currentChoices[choiceIndex];
+
+    // turn powerup on
+    switch (id) {
+
+        case 0: g.powerups.fireRateLevel += 1; break;
+        case 1: g.powerups.fireRateLevel += 2; break;
+
+        case 2: g.powerups.speedLevel += 1; break;
+        case 3: g.powerups.speedLevel += 2; break;
+
+        case 4: g.powerups.damageLevel += 1; break;
+        case 5: g.powerups.damageLevel += 2; break;
+
+        case 6: g.powerups.homing = true; break;
+        case 7: g.powerups.pierce = true; break;
+
+        case 8: g.currentWeapon = 3; break;
+        case 9: g.currentWeapon = 2; break;
+        case 10: g.currentWeapon = 1; break;
+    }
+
+    // remove from options
+    for (int i = 0; i < g.availableCount; i++) {
+        if (g.availablePowerups[i] == id) {
+            g.availablePowerups[i] = g.availablePowerups[g.availableCount - 1];
+            g.availableCount--;
+            break;
+        }
+    }
+}
+
+//const int POWERUP_COUNT = 6;
+
 void physics(float dt)
 {
     g.tex.yc[0] += 0.005f;
@@ -608,8 +759,11 @@ void physics(float dt)
     }
 
     if (g.state == STATE_LEVEL_INTRO) {
+
         g.levelIntroTimer += dt;
+
         if (g.levelIntroTimer >= 2.0f) {
+            
             g.state = STATE_PLAYING;
             g.levelIntroTimer = 0.0f;
             obstaclesReset();
@@ -619,9 +773,10 @@ void physics(float dt)
     float rad    = g.shipAngle * (float)M_PI / 180.0f;
     float cosA   = cosf(rad), sinA = sinf(rad);
     float rotSpd = 600.0f * dt;
-    float movSpd = g.ShipSpeed;
-
+    float movSpd = g.ShipSpeed * (1.0f + 0.3f * g.powerups.speedLevel);
+    float fireCooldown = FIRE_COOLDOWN / (1.0f + 0.25f * g.powerups.fireRateLevel);
     float dx = 0, dy = 0;
+
     if (g.keys[XK_w]) { dx += cosA * movSpd; dy += sinA * movSpd; }
     if (g.keys[XK_s] && !g.movSwitch) { dx -= cosA * movSpd; dy -= sinA * movSpd; }
     if (g.keys[XK_a]) {
@@ -650,12 +805,15 @@ void physics(float dt)
                     (g.currentWeapon == 2) ? 12 : 14;
 
     if (g.spacePressed && g.currentWeapon != 3) {
-        if (g.weaponTimer >= FIRE_COOLDOWN) {
+
+       // float fireCooldown = FIRE_COOLDOWN / (1.0f + 0.25f * g.powerups.fireRateLevel);
+        if (g.weaponTimer >= fireCooldown) {
             g.weaponTimer = 0.0f;
             for (int i = 0; i < MAX_BULLETS; i++) {
                 if (!g.bullets[i].active) {
                     g.bullets[i].active    = 1;
                     g.bullets[i].type      = g.currentWeapon;
+                    g.bullets[i].damage = 1 + g.powerups.damageLevel;
                     g.bullets[i].x         = g.shipx;
                     g.bullets[i].y         = g.shipy;
                     g.bullets[i].vel       = 10.0f;
@@ -712,11 +870,56 @@ void physics(float dt)
         g.bullets[i].x += g.bullets[i].xVel;
         g.bullets[i].y += g.bullets[i].yVel;
 
+        bool onScreen =
+            g.bullets[i].x >= 0 && g.bullets[i].x <= g.xres &&
+            g.bullets[i].y >= 0 && g.bullets[i].y <= g.yres;
+
+        if (g.powerups.homing && g.bullets[i].type != 3 && onScreen) {
+        
+            float tx, ty;
+            if (find_nearest_enemy(g.bullets[i].x, g.bullets[i].y, tx, ty) >= 0) {
+            
+                float vx = g.bullets[i].xVel;
+                float vy = g.bullets[i].yVel;
+            
+                float currentAngle = atan2f(vy, vx);
+            
+                // direction
+                float dx = tx - g.bullets[i].x;
+                float dy = ty - g.bullets[i].y;
+                float targetAngle = atan2f(dy, dx);
+            
+                // angle
+                float diff = targetAngle - currentAngle;
+            
+                while (diff > M_PI)  diff -= 2.0f * M_PI;
+                while (diff < -M_PI) diff += 2.0f * M_PI;
+            
+                // turn speed
+                float turnSpeed = 0.05f;
+            
+                if (diff > turnSpeed)  diff = turnSpeed;
+                if (diff < -turnSpeed) diff = -turnSpeed;
+            
+                // rotate bullets
+                float newAngle = currentAngle + diff;
+            
+                float speed = g.bullets[i].vel;
+            
+                g.bullets[i].xVel = cosf(newAngle) * speed;
+                g.bullets[i].yVel = sinf(newAngle) * speed;
+                g.bullets[i].angle = newAngle * 180.0f / M_PI;
+            }
+        }
+
         int t = g.bullets[i].type;
         if (t != 3 &&
             (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
-             g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20))
-            g.bullets[i].active = 0;
+             g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20)) {
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
+
+             }
 
         if (!g.bullets[i].active) continue;
 
@@ -740,7 +943,8 @@ void physics(float dt)
             int hit = obstaclesCheckBulletAsteroid(
                 g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (hit >= 0) {
-                g.bullets[i].active = 0;
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
                 g.score += 10;
                 continue;
             }
@@ -748,14 +952,16 @@ void physics(float dt)
             int bHit = obstaclesCheckBulletBarrier(
                 g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (bHit >= 0) {
-                g.bullets[i].active = 0;
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
                 continue;
             }
 
             int eHit = enemy_check_bullet_hit(
                 g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (eHit >= 0) {
-                g.bullets[i].active = 0;
+                if (!g.powerups.pierce)    
+                    g.bullets[i].active = 0;
                 g.score += 15;
                 continue;
             }
@@ -804,7 +1010,24 @@ void physics(float dt)
         enemies_physics(g.shipx, g.shipy, g.xres, g.yres, dt);
     }
 
-    float speed = 5.0f; // higher = faster drain
+    if (g.state == STATE_PLAYING) {
+        
+        g.levelTimer += dt;
+
+        if (g.levelTimer >= 5.5f) {
+            g.levelTimer = 0.0f;
+
+            generatePowerups();
+            // clear objects
+            obstaclesReset(); //////////////////
+            for (int i = 0; i < MAX_BULLETS; i++)
+                g.bullets[i].active = 0;
+
+            g.state = STATE_POWERUP; ////////////////////
+        }
+    }
+
+    float speed = 5.0f;
 
     if (g.displayHP > g.playerHP) {
 
@@ -817,6 +1040,56 @@ void physics(float dt)
         g.displayHP += speed * dt;
         if (g.displayHP > g.playerHP)
             g.displayHP = g.playerHP;
+    }
+
+    if (g.state == STATE_POWERUP) {
+
+        float px = g.shipx;
+        float py = g.shipy;
+
+        // box settings
+        float boxW = 200.0f;
+        float boxH = g.yres * 0.6f;
+        float gap  = 140.0f;
+
+        float cx = g.xres / 2.0f;
+        float cy = g.yres / 2.0f;
+
+        float totalW = boxW * 2 + gap;
+
+        float boxesX[2] = {
+            cx - totalW/2 + boxW/2,
+            cx + totalW/2 - boxW/2
+        };
+        float boxesY = cy;
+
+        for (int i = 0; i < 2; i++) {
+
+            bool inside =
+                px > boxesX[i] - boxW/2 && px < boxesX[i] + boxW/2 &&
+                py > boxesY - boxH/2 && py < boxesY + boxH/2;
+
+            if (inside) {
+
+                g.powerupFill[i] += dt / 2.5f;
+                if (g.powerupFill[i] > 1.0f)
+                    g.powerupFill[i] = 1.0f;
+
+                if (g.powerupFill[i] >= 1.0f) {
+
+                    g.selectedPowerup = i;
+                    pickPowerup(i);
+
+                    g.state = STATE_LEVEL_INTRO;
+                    g.currentLevel++;
+                    g.powerupFill[0] = g.powerupFill[1] = 0.0f;
+                }
+            } else {
+                g.powerupFill[i] -= dt * 0.5f;
+                if (g.powerupFill[i] < 0.0f)
+                    g.powerupFill[i] = 0.0f;
+            }
+        }
     }
 }
 
@@ -1002,6 +1275,67 @@ void renderHealthBar()
 
 }
 
+static void renderPowerups()
+{
+    float boxW = 200.0f;
+    float boxH = g.yres * 0.6f;
+    float gap  = 40.0f;
+
+    float cx = g.xres / 2.0f;
+    float cy = g.yres / 2.0f;
+
+    float totalW = boxW * 2 + gap;
+
+    float boxesX[2] = {
+        cx - totalW/2 + boxW/2,
+        cx + totalW/2 - boxW/2
+    };
+
+    const char* names[2] = {
+        POWERUPS[g.currentChoices[0]],
+        POWERUPS[g.currentChoices[1]]
+    };
+
+    for (int i = 0; i < 2; i++) {
+
+        float x = boxesX[i];
+        float y = cy;
+        float fill = g.powerupFill[i];
+
+        float r = (i == 0) ? 0.2f : 0.2f;
+        float gC= (i == 0) ? 0.6f : 0.9f;
+        float b = (i == 0) ? 1.0f : 0.2f;
+
+        glDisable(GL_TEXTURE_2D);
+
+        glLineWidth(3.0f);
+        glColor4f(r, gC, b, 1.0f);
+        glBegin(GL_LINE_LOOP);
+            glVertex2f(x - boxW/2, y - boxH/2);
+            glVertex2f(x + boxW/2, y - boxH/2);
+            glVertex2f(x + boxW/2, y + boxH/2);
+            glVertex2f(x - boxW/2, y + boxH/2);
+        glEnd();
+
+        // fill from bottom to top
+        glColor4f(r, gC, b, 0.35f);
+        glBegin(GL_QUADS);
+            glVertex2f(x - boxW/2, y - boxH/2);
+            glVertex2f(x + boxW/2, y - boxH/2);
+            glVertex2f(x + boxW/2, y - boxH/2 + boxH * fill);
+            glVertex2f(x - boxW/2, y - boxH/2 + boxH * fill);
+        glEnd();
+
+        glEnable(GL_TEXTURE_2D);
+
+        Rect rText;
+        rText.bot = y - 8;
+        rText.left = x;
+        rText.center = 1;
+        ggprint16(&rText, 0, 0x00ffffff, names[i]);
+    }
+}
+
 static void renderHUD()
 {
     Rect r;
@@ -1011,8 +1345,9 @@ static void renderHUD()
 
     ggprint12(&r, 2, 0x00ffffff, "K - switch weapon");  r.bot -= 20;
     ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");    r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "WASD- move");    r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "M - alt movement W + Mouse");   r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "P - pause");  r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "WASD - movement");    r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "M - alt movement (W + Mouse)");   r.bot -= 20;
 
     if (g.state == STATE_PLAYING) {
         ggprint12(&r, 2, 0x00ffffff, "R - reset obstacles"); r.bot -= 20;
@@ -1064,6 +1399,11 @@ void render()
 
     if (g.state == STATE_PLAYING) 
         renderHealthBar();
+    
+    if (g.state == STATE_POWERUP) {
+        renderPowerups();
+       // return;
+    }
     
     renderHUD();
 }

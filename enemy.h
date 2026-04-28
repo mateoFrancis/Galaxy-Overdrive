@@ -44,5 +44,5 @@ float  get_explosion_frame_time();
 
 // shared loader that preserves png alpha channel
 void load_png_with_alpha(const char *fname, int *outW, int *outH, unsigned char **outData);
-
+int find_nearest_enemy(float x, float y, float &outX, float &outY);
 #endif

@@ -378,3 +378,30 @@ void render_enemies()
         glPopMatrix();
     }
 }
+
+int find_nearest_enemy(float x, float y, float &outX, float &outY)
+{
+    float bestDist = 9999999.0f;
+    int bestIndex = -1;
+
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].active) continue;
+        if (enemies[i].exploding) continue;
+
+        float dx = enemies[i].x - x;
+        float dy = enemies[i].y - y;
+        float dist = dx*dx + dy*dy; // squared distance
+
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex >= 0) {
+        outX = enemies[bestIndex].x;
+        outY = enemies[bestIndex].y;
+    }
+
+    return bestIndex;
+}
