@@ -28,65 +28,67 @@ enum GameState {
     STATE_TITLE,
     STATE_LEVEL_INTRO,
     STATE_PLAYING,
-    STATE_POWERUP
+    STATE_POWERUP,
+    STATE_LEVEL_COMPLETE,  
+    STATE_DEAD
 };
 
 class Image {
-public:
-    int width, height;
-    unsigned char *data;
+    public:
+        int width, height;
+        unsigned char *data;
 
-    Image() : width(0), height(0), data(NULL) {}
+        Image() : width(0), height(0), data(NULL) {}
 
-    ~Image() { delete[] data; }
+        ~Image() { delete[] data; }
 
-    void load(const char *fname) {
-        if (!fname || fname[0] == '\0') return;
+        void load(const char *fname) {
+            if (!fname || fname[0] == '\0') return;
 
-        char name[256];
-        strncpy(name, fname, sizeof(name) - 1);
-        name[sizeof(name) - 1] = '\0';
+            char name[256];
+            strncpy(name, fname, sizeof(name) - 1);
+            name[sizeof(name) - 1] = '\0';
 
-        int slen = (int)strlen(name);
-        if (slen >= 4) name[slen - 4] = '\0';
+            int slen = (int)strlen(name);
+            if (slen >= 4) name[slen - 4] = '\0';
 
-        char ppmname[512];
-        snprintf(ppmname, sizeof(ppmname), "%s.ppm", name);
+            char ppmname[512];
+            snprintf(ppmname, sizeof(ppmname), "%s.ppm", name);
 
-        char ts[1024];
-        snprintf(ts, sizeof(ts), "convert %s %s", fname, ppmname);
-        system(ts);
+            char ts[1024];
+            snprintf(ts, sizeof(ts), "convert %s %s", fname, ppmname);
+            system(ts);
 
-        FILE *fpi = fopen(ppmname, "rb");
-        if (!fpi) {
-            printf("ERROR opening image: %s\n", ppmname);
-            exit(1);
-        }
+            FILE *fpi = fopen(ppmname, "rb");
+            if (!fpi) {
+                printf("ERROR opening image: %s\n", ppmname);
+                exit(1);
+            }
 
-        char line[200];
-        fgets(line, 200, fpi);
-        fgets(line, 200, fpi);
-        while (line[0] == '#')
+            char line[200];
+            fgets(line, 200, fpi);
+            fgets(line, 200, fpi);
+            while (line[0] == '#')
+                fgets(line, 200, fpi);
+
+            sscanf(line, "%i %i", &width, &height);
             fgets(line, 200, fpi);
 
-        sscanf(line, "%i %i", &width, &height);
-        fgets(line, 200, fpi);
+            int n = width * height * 4;
+            data = new unsigned char[n];
 
-        int n = width * height * 4;
-        data = new unsigned char[n];
-
-        for (int i = 0; i < width * height; i++) {
-            unsigned char r = (unsigned char)fgetc(fpi);
-            unsigned char g = (unsigned char)fgetc(fpi);
-            unsigned char b = (unsigned char)fgetc(fpi);
-            data[i*4+0] = r;
-            data[i*4+1] = g;
-            data[i*4+2] = b;
-            data[i*4+3] = (r < 50 && g < 50 && b < 50) ? 0 : 255;
+            for (int i = 0; i < width * height; i++) {
+                unsigned char r = (unsigned char)fgetc(fpi);
+                unsigned char g = (unsigned char)fgetc(fpi);
+                unsigned char b = (unsigned char)fgetc(fpi);
+                data[i*4+0] = r;
+                data[i*4+1] = g;
+                data[i*4+2] = b;
+                data[i*4+3] = (r < 50 && g < 50 && b < 50) ? 0 : 255;
+            }
+            fclose(fpi);
+            unlink(ppmname);
         }
-        fclose(fpi);
-        unlink(ppmname);
-    }
 };
 
 struct Texture {
@@ -146,66 +148,66 @@ struct StartButton {
 
     bool contains(float px, float py) const {
         return visible &&
-               px >= x - w/2 && px <= x + w/2 &&
-               py >= y - h/2 && py <= y + h/2;
+            px >= x - w/2 && px <= x + w/2 &&
+            py >= y - h/2 && py <= y + h/2;
     }
 };
 
 class Global {
-public:
-    int xres, yres;
-    Texture tex;
-    TitleAnim title;
+    public:
+        int xres, yres;
+        Texture tex;
+        TitleAnim title;
 
-    int mousex, mousey;
-    int spacePressed;
-    int movSwitch;
-    int currentWeapon;
+        int mousex, mousey;
+        int spacePressed;
+        int movSwitch;
+        int currentWeapon;
 
-    int   weaponFrame;
-    float weaponTimer;
+        int   weaponFrame;
+        float weaponTimer;
 
-    float shipx, shipy;
-    float ShipSpeed;
-    float shipAngle;
-    int   fps;
-    int   paused;
+        float shipx, shipy;
+        float ShipSpeed;
+        float shipAngle;
+        int   fps;
+        int   paused;
 
-    float levelTimer;
-    float powerupFill[2];
-    int   selectedPowerup;
+        float levelTimer;
+        float powerupFill[2];
+        int   selectedPowerup;
 
-    int   keys[512];
-    Bullet bullets[MAX_BULLETS];
+        int   keys[512];
+        Bullet bullets[MAX_BULLETS];
 
-    int   playerHP;
-    int   score;
+        int   playerHP;
+        int   score;
 
-    float spawnTimer;
-    float spawnInterval;
+        float spawnTimer;
+        float spawnInterval;
 
-    GameState state;
-    float     levelIntroTimer;
-    int       currentLevel;
-    StartButton startBtn;
-    float displayHP;
+        GameState state;
+        float     levelIntroTimer;
+        int       currentLevel;
+        StartButton startBtn;
+        float displayHP;
 
-    Powerups powerups;
+        Powerups powerups;
 
-    int availablePowerups[16];
-    int availableCount;
-    int currentChoices[2];
+        int availablePowerups[16];
+        int availableCount;
+        int currentChoices[2];
 
-    Global()
-        : xres(640), yres(480),
-          mousex(320), mousey(240),
-          spacePressed(0), movSwitch(0), currentWeapon(0),
-          weaponFrame(0), weaponTimer(0.0f),
-          shipx(320.0f), shipy(160.0f),
-          ShipSpeed(6.0f), shipAngle(0.0f),
-          fps(0), playerHP(100), score(0),
-          spawnTimer(0.0f), spawnInterval(2.0f),
-          state(STATE_TITLE), levelIntroTimer(0.0f), currentLevel(1)
+        Global()
+            : xres(640), yres(480),
+            mousex(320), mousey(240),
+            spacePressed(0), movSwitch(0), currentWeapon(0),
+            weaponFrame(0), weaponTimer(0.0f),
+            shipx(320.0f), shipy(160.0f),
+            ShipSpeed(6.0f), shipAngle(0.0f),
+            fps(0), playerHP(100), score(0),
+            spawnTimer(0.0f), spawnInterval(2.0f),
+            state(STATE_TITLE), levelIntroTimer(0.0f), currentLevel(1)
     {
         memset(keys, 0, sizeof(keys));
         for (int i = 0; i < MAX_BULLETS; i++)
@@ -237,7 +239,7 @@ class X11_wrapper {
     Display  *dpy;
     Window    win;
     GLXContext glc;
-public:
+    public:
     X11_wrapper() {
         GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
         dpy = XOpenDisplay(NULL);
@@ -256,8 +258,8 @@ public:
             StructureNotifyMask | SubstructureNotifyMask;
 
         win = XCreateWindow(dpy, root, 0, 0, g.xres, g.yres, 0,
-                            vi->depth, InputOutput, vi->visual,
-                            CWColormap | CWEventMask, &swa);
+                vi->depth, InputOutput, vi->visual,
+                CWColormap | CWEventMask, &swa);
         XMapWindow(dpy, win);
         XStoreName(dpy, win, "Galaxy Overdrive");
 
@@ -304,7 +306,7 @@ static void upload_texture(GLuint *tex, Image *img) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, 4, img->width, img->height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, img->data);
+            GL_RGBA, GL_UNSIGNED_BYTE, img->data);
 }
 
 static Image img_back, img_logo;
@@ -328,6 +330,12 @@ void renderPause();
 void initPowerups();
 void generatePowerups();
 void pickPowerup(int id);
+void levelsInitDeath(float shipX, float shipY);
+void levelsUpdateDeath(float dt);
+void levelsRenderDeath();
+void levelsRenderComplete();
+void levelsOnEnemyKilled();
+void levelsUpdate(float dt);
 
 int main()
 {
@@ -370,7 +378,10 @@ int main()
 
         render();
 
-        if (g.paused) {
+
+        if (g.paused &&
+                g.state != STATE_DEAD &&
+                g.state != STATE_LEVEL_COMPLETE) {
             renderPause();
         }
 
@@ -470,39 +481,42 @@ int check_keys(XEvent *e)
             case XK_Escape: return 1;
 
             case XK_equal:
-                g.ShipSpeed = fminf(g.ShipSpeed * 2.0f, 96.0f);
-                break;
+                            g.ShipSpeed = fminf(g.ShipSpeed * 2.0f, 96.0f);
+                            break;
 
             case XK_space:
-                g.spacePressed = 1;
-                break;
+                            g.spacePressed = 1;
+                            break;
 
             case XK_m:
-                g.movSwitch = !g.movSwitch;
-                break;
+                            g.movSwitch = !g.movSwitch;
+                            break;
 
             case XK_k:
-                for (int i = 0; i < MAX_BULLETS; i++)
-                    if (g.bullets[i].type == 3)
-                        g.bullets[i].active = 0;
-                g.currentWeapon = (g.currentWeapon + 1) % 4;
-                g.weaponFrame   = 0;
-                g.weaponTimer   = 0.0f;
-                break;
+                            for (int i = 0; i < MAX_BULLETS; i++)
+                                if (g.bullets[i].type == 3)
+                                    g.bullets[i].active = 0;
+                            g.currentWeapon = (g.currentWeapon + 1) % 4;
+                            g.weaponFrame   = 0;
+                            g.weaponTimer   = 0.0f;
+                            break;
 
             case XK_r:
-                if (g.state == STATE_PLAYING) {
-                    obstaclesReset();
-                    g.playerHP = 10;
-                    g.score    = 0;
-                }
-                break;
+                            if (g.state == STATE_PLAYING) {
+                                obstaclesReset();
+                                g.playerHP = 10;
+                                g.score    = 0;
+                            }
+                            break;
+
 
             case XK_p:
-                g.paused = !g.paused;
-                // close level-select panel whenever we un-pause manually
-                if (!g.paused) lv_selectOpen = false;
-                break;
+                            // Don't allow pausing during death or level-complete screens
+                            if (g.state != STATE_DEAD && g.state != STATE_LEVEL_COMPLETE) {
+                                g.paused = !g.paused;
+                                if (!g.paused) lv_selectOpen = false;
+                            }
+                            break;
         }
     }
 
@@ -521,10 +535,10 @@ void renderPause()
     glDisable(GL_TEXTURE_2D);
     glColor4f(0.f, 0.f, 0.f, 0.52f);
     glBegin(GL_QUADS);
-        glVertex2f(0,      0);
-        glVertex2f(g.xres, 0);
-        glVertex2f(g.xres, g.yres);
-        glVertex2f(0,      g.yres);
+    glVertex2f(0,      0);
+    glVertex2f(g.xres, 0);
+    glVertex2f(g.xres, g.yres);
+    glVertex2f(0,      g.yres);
     glEnd();
     glEnable(GL_TEXTURE_2D);
 
@@ -538,10 +552,10 @@ void renderPause()
     // panel background
     glColor4f(0.03f, 0.06f, 0.14f, 0.92f);
     glBegin(GL_QUADS);
-        glVertex2f(px,    py);
-        glVertex2f(px+pw, py);
-        glVertex2f(px+pw, py+ph);
-        glVertex2f(px,    py+ph);
+    glVertex2f(px,    py);
+    glVertex2f(px+pw, py);
+    glVertex2f(px+pw, py+ph);
+    glVertex2f(px,    py+ph);
     glEnd();
 
     // panel border (pulsing blue)
@@ -549,10 +563,10 @@ void renderPause()
     glLineWidth(2.f);
     glColor4f(0.25f + 0.4f*pulse, 0.55f + 0.3f*pulse, 1.f, 0.9f);
     glBegin(GL_LINE_LOOP);
-        glVertex2f(px,    py);
-        glVertex2f(px+pw, py);
-        glVertex2f(px+pw, py+ph);
-        glVertex2f(px,    py+ph);
+    glVertex2f(px,    py);
+    glVertex2f(px+pw, py);
+    glVertex2f(px+pw, py+ph);
+    glVertex2f(px,    py+ph);
     glEnd();
 
     glEnable(GL_TEXTURE_2D);
@@ -570,8 +584,8 @@ void renderPause()
     // divider row: current level name
     r.bot -= 30;
     ggprint12(&r, 0, 0x0088ffff, "%s  -  %s",
-              LEVEL_DEFS[lv_current].title,
-              LEVEL_DEFS[lv_current].subtitle);
+            LEVEL_DEFS[lv_current].title,
+            LEVEL_DEFS[lv_current].subtitle);
 
     // keybind reminder rows
     r.bot -= 28;
@@ -607,10 +621,10 @@ void title_render(const TitleAnim &t)
     glBindTexture(GL_TEXTURE_2D, g.tex.logoTex);
     glColor4f(1, 1, 1, 1);
     glBegin(GL_QUADS);
-        glTexCoord2f(0,1); glVertex2f(cx - w/2, cy - h/2);
-        glTexCoord2f(0,0); glVertex2f(cx - w/2, cy + h/2);
-        glTexCoord2f(1,0); glVertex2f(cx + w/2, cy + h/2);
-        glTexCoord2f(1,1); glVertex2f(cx + w/2, cy - h/2);
+    glTexCoord2f(0,1); glVertex2f(cx - w/2, cy - h/2);
+    glTexCoord2f(0,0); glVertex2f(cx - w/2, cy + h/2);
+    glTexCoord2f(1,0); glVertex2f(cx + w/2, cy + h/2);
+    glTexCoord2f(1,1); glVertex2f(cx + w/2, cy - h/2);
     glEnd();
 }
 
@@ -626,19 +640,19 @@ void renderStartButton()
 
     glColor4f(0.1f, 0.4f, 0.8f, 0.85f);
     glBegin(GL_QUADS);
-        glVertex2f(x - w/2, y - h/2);
-        glVertex2f(x + w/2, y - h/2);
-        glVertex2f(x + w/2, y + h/2);
-        glVertex2f(x - w/2, y + h/2);
+    glVertex2f(x - w/2, y - h/2);
+    glVertex2f(x + w/2, y - h/2);
+    glVertex2f(x + w/2, y + h/2);
+    glVertex2f(x - w/2, y + h/2);
     glEnd();
 
     glLineWidth(3.0f);
     glColor4f(0.4f + 0.6f*pulse, 0.8f + 0.2f*pulse, 1.0f, 1.0f);
     glBegin(GL_LINE_LOOP);
-        glVertex2f(x - w/2, y - h/2);
-        glVertex2f(x + w/2, y - h/2);
-        glVertex2f(x + w/2, y + h/2);
-        glVertex2f(x - w/2, y + h/2);
+    glVertex2f(x - w/2, y - h/2);
+    glVertex2f(x + w/2, y - h/2);
+    glVertex2f(x + w/2, y + h/2);
+    glVertex2f(x - w/2, y + h/2);
     glEnd();
 
     glEnable(GL_TEXTURE_2D);
@@ -777,6 +791,8 @@ void physics(float dt)
     if (g.state == STATE_LEVEL_INTRO) {
         g.levelIntroTimer += dt;
         if (g.levelIntroTimer >= 2.0f) {
+            g.playerHP        = 10;
+            g.displayHP       = 100.f;
             g.state           = STATE_PLAYING;
             g.levelIntroTimer = 0.0f;
             // Load the level matching lv_current (set by levelsHandleKey or
@@ -784,6 +800,23 @@ void physics(float dt)
             lv_loadLevel(lv_current);
         }
     }
+
+    if (g.state == STATE_LEVEL_COMPLETE) {
+        lv_completeTimer += dt;
+        if (lv_completeTimer >= 3.0f) {
+            generatePowerups();
+            obstaclesReset();
+            for (int i = 0; i < MAX_BULLETS; i++)
+                g.bullets[i].active = 0;
+            g.state = STATE_POWERUP;
+        }
+    }
+
+    // ---- Death animation tick ----
+    if (g.state == STATE_DEAD) {
+        levelsUpdateDeath(dt);
+    }
+
 
     float rad    = g.shipAngle * (float)M_PI / 180.0f;
     float cosA   = cosf(rad), sinA = sinf(rad);
@@ -816,8 +849,8 @@ void physics(float dt)
     g.weaponTimer += dt;
 
     int maxFrames = (g.currentWeapon == 0) ? 7  :
-                    (g.currentWeapon == 1) ? 16 :
-                    (g.currentWeapon == 2) ? 12 : 14;
+        (g.currentWeapon == 1) ? 16 :
+        (g.currentWeapon == 2) ? 12 : 14;
 
     if (g.spacePressed && g.currentWeapon != 3) {
         if (g.weaponTimer >= fireCooldown) {
@@ -851,7 +884,7 @@ void physics(float dt)
             bool zapActive = false;
             for (int i = 0; i < MAX_BULLETS; i++)
                 if (g.bullets[i].active && g.bullets[i].type == 3)
-                    { zapActive = true; break; }
+                { zapActive = true; break; }
 
             if (!zapActive) {
                 for (int i = 0; i < MAX_BULLETS; i++) {
@@ -912,8 +945,8 @@ void physics(float dt)
 
         int t = g.bullets[i].type;
         if (t != 3 &&
-            (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
-             g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20)) {
+                (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
+                 g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20)) {
             if (!g.powerups.pierce)
                 g.bullets[i].active = 0;
         }
@@ -940,7 +973,7 @@ void physics(float dt)
 
         if (g.state == STATE_PLAYING) {
             int hit = obstaclesCheckBulletAsteroid(
-                g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
+                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (hit >= 0) {
                 if (!g.powerups.pierce) g.bullets[i].active = 0;
                 g.score += 10;
@@ -948,19 +981,22 @@ void physics(float dt)
             }
 
             int bHit = obstaclesCheckBulletBarrier(
-                g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
+                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (bHit >= 0) {
                 if (!g.powerups.pierce) g.bullets[i].active = 0;
                 continue;
             }
 
+
             int eHit = enemy_check_bullet_hit(
-                g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
+                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (eHit >= 0) {
                 if (!g.powerups.pierce) g.bullets[i].active = 0;
                 g.score += 15;
+                levelsOnEnemyKilled();  
                 continue;
             }
+
         }
     }
 
@@ -992,6 +1028,12 @@ void physics(float dt)
 
         obstaclesUpdate(dt, g.shipx, g.shipy);
         levelsUpdate(dt);       // << level system tick
+                                //
+
+        if (g.playerHP <= 0 && g.state == STATE_PLAYING) {
+            g.state = STATE_DEAD;
+            levelsInitDeath(g.shipx, g.shipy);
+        }
 
         g.spawnTimer += dt;
         if (g.spawnTimer >= g.spawnInterval) {
@@ -1002,19 +1044,19 @@ void physics(float dt)
     }
 
     // Timed powerup trigger
-   // if (g.state == STATE_PLAYING) {
-   //     g.levelTimer += dt;
+    // if (g.state == STATE_PLAYING) {
+    //     g.levelTimer += dt;
 
-   //     if (g.levelTimer >= 5.5f) {
+    //     if (g.levelTimer >= 5.5f) {
 
-   //         g.levelTimer = 0.0f;
-   //         generatePowerups();
-   //         obstaclesReset();
-   //         for (int i = 0; i < MAX_BULLETS; i++)
-   //             g.bullets[i].active = 0;
-   //         g.state = STATE_POWERUP;
-   //     }
-   // }
+    //         g.levelTimer = 0.0f;
+    //         generatePowerups();
+    //         obstaclesReset();
+    //         for (int i = 0; i < MAX_BULLETS; i++)
+    //             g.bullets[i].active = 0;
+    //         g.state = STATE_POWERUP;
+    //     }
+    // }
 
     // displayHP smooth animation
     float hpSpeed = 5.0f;
@@ -1080,10 +1122,10 @@ void renderShip()
     glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
     glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
     glBegin(GL_QUADS);
-        glTexCoord2f(0,1); glVertex2f(-w/2, -h/2);
-        glTexCoord2f(0,0); glVertex2f(-w/2,  h/2);
-        glTexCoord2f(1,0); glVertex2f( w/2,  h/2);
-        glTexCoord2f(1,1); glVertex2f( w/2, -h/2);
+    glTexCoord2f(0,1); glVertex2f(-w/2, -h/2);
+    glTexCoord2f(0,0); glVertex2f(-w/2,  h/2);
+    glTexCoord2f(1,0); glVertex2f( w/2,  h/2);
+    glTexCoord2f(1,1); glVertex2f( w/2, -h/2);
     glEnd();
     glPopMatrix();
 
@@ -1103,10 +1145,10 @@ void renderShip()
     glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
     glBindTexture(GL_TEXTURE_2D, wtex);
     glBegin(GL_QUADS);
-        glTexCoord2f(tx0,1); glVertex2f(-ww/2, -hh/2);
-        glTexCoord2f(tx0,0); glVertex2f(-ww/2,  hh/2);
-        glTexCoord2f(tx1,0); glVertex2f( ww/2,  hh/2);
-        glTexCoord2f(tx1,1); glVertex2f( ww/2, -hh/2);
+    glTexCoord2f(tx0,1); glVertex2f(-ww/2, -hh/2);
+    glTexCoord2f(tx0,0); glVertex2f(-ww/2,  hh/2);
+    glTexCoord2f(tx1,0); glVertex2f( ww/2,  hh/2);
+    glTexCoord2f(tx1,1); glVertex2f( ww/2, -hh/2);
     glEnd();
     glPopMatrix();
 }
@@ -1144,10 +1186,10 @@ void renderBullets()
             for (int j = 0; j < 4; j++) {
                 float off = (j - 1.5f) * spacing;
                 glBegin(GL_QUADS);
-                    glTexCoord2f(tx0,1); glVertex2f(off-bw, -bh-15);
-                    glTexCoord2f(tx0,0); glVertex2f(off-bw,  bh);
-                    glTexCoord2f(tx1,0); glVertex2f(off+bw,  bh);
-                    glTexCoord2f(tx1,1); glVertex2f(off+bw, -bh-15);
+                glTexCoord2f(tx0,1); glVertex2f(off-bw, -bh-15);
+                glTexCoord2f(tx0,0); glVertex2f(off-bw,  bh);
+                glTexCoord2f(tx1,0); glVertex2f(off+bw,  bh);
+                glTexCoord2f(tx1,1); glVertex2f(off+bw, -bh-15);
                 glEnd();
             }
             glPopMatrix();
@@ -1158,10 +1200,10 @@ void renderBullets()
             float beamLen = sqrtf((float)(g.xres*g.xres + g.yres*g.yres));
             float beamW   = 40.0f * s;
             glBegin(GL_QUADS);
-                glTexCoord2f(tx0,1); glVertex2f(-beamW/2, 0);
-                glTexCoord2f(tx0,0); glVertex2f(-beamW/2, beamLen);
-                glTexCoord2f(tx1,0); glVertex2f( beamW/2, beamLen);
-                glTexCoord2f(tx1,1); glVertex2f( beamW/2, 0);
+            glTexCoord2f(tx0,1); glVertex2f(-beamW/2, 0);
+            glTexCoord2f(tx0,0); glVertex2f(-beamW/2, beamLen);
+            glTexCoord2f(tx1,0); glVertex2f( beamW/2, beamLen);
+            glTexCoord2f(tx1,1); glVertex2f( beamW/2, 0);
             glEnd();
             glPopMatrix();
         } else {
@@ -1169,10 +1211,10 @@ void renderBullets()
             glTranslatef(x, y, 0);
             glRotatef(g.bullets[i].angle - 90.0f, 0, 0, 1);
             glBegin(GL_QUADS);
-                glTexCoord2f(tx0,1); glVertex2f(-bw, -bh);
-                glTexCoord2f(tx0,0); glVertex2f(-bw,  bh);
-                glTexCoord2f(tx1,0); glVertex2f( bw,  bh);
-                glTexCoord2f(tx1,1); glVertex2f( bw, -bh);
+            glTexCoord2f(tx0,1); glVertex2f(-bw, -bh);
+            glTexCoord2f(tx0,0); glVertex2f(-bw,  bh);
+            glTexCoord2f(tx1,0); glVertex2f( bw,  bh);
+            glTexCoord2f(tx1,1); glVertex2f( bw, -bh);
             glEnd();
             glPopMatrix();
         }
@@ -1192,7 +1234,7 @@ void renderHealthBar()
 
     if (hpRatio < 0.0f) 
         hpRatio = 0.0f;
-  
+
     float s = getScale();
     float w = 200.0f * s;
     float h = 50.0f * s;
@@ -1216,22 +1258,22 @@ void renderHealthBar()
 
     // bar
     glBegin(GL_QUADS);
-        glTexCoord2f(0.4f, barTexY1); glVertex2f(x + barOffset, y + yOffset);
-        glTexCoord2f(0.4f, barTexY0); glVertex2f(x + barOffset, y + h + yOffset);
+    glTexCoord2f(0.4f, barTexY1); glVertex2f(x + barOffset, y + yOffset);
+    glTexCoord2f(0.4f, barTexY0); glVertex2f(x + barOffset, y + h + yOffset);
 
-        glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY0);
-        glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + h + yOffset);
+    glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY0);
+    glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + h + yOffset);
 
-        glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY1);
-        glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + yOffset);
+    glTexCoord2f(0.4f + (0.5f * (g.displayHP / maxHP)), barTexY1);
+    glVertex2f(x + barOffset + (w * 0.6f / maxHP) * g.displayHP, y + yOffset);
     glEnd();
 
     // container
     glBegin(GL_QUADS);
-        glTexCoord2f(0.0f, contTexY1); glVertex2f(x, y);
-        glTexCoord2f(0.0f, contTexY0); glVertex2f(x, y + h);
-        glTexCoord2f(1.0f, contTexY0); glVertex2f(x + w, y + h);
-        glTexCoord2f(1.0f, contTexY1); glVertex2f(x + w, y);
+    glTexCoord2f(0.0f, contTexY1); glVertex2f(x, y);
+    glTexCoord2f(0.0f, contTexY0); glVertex2f(x, y + h);
+    glTexCoord2f(1.0f, contTexY0); glVertex2f(x + w, y + h);
+    glTexCoord2f(1.0f, contTexY1); glVertex2f(x + w, y);
     glEnd();
 
     char hpText[16];
@@ -1278,18 +1320,18 @@ static void renderPowerups()
         glLineWidth(3.0f);
         glColor4f(rC, gC, bC, 1.0f);
         glBegin(GL_LINE_LOOP);
-            glVertex2f(x - boxW/2, y - boxH/2);
-            glVertex2f(x + boxW/2, y - boxH/2);
-            glVertex2f(x + boxW/2, y + boxH/2);
-            glVertex2f(x - boxW/2, y + boxH/2);
+        glVertex2f(x - boxW/2, y - boxH/2);
+        glVertex2f(x + boxW/2, y - boxH/2);
+        glVertex2f(x + boxW/2, y + boxH/2);
+        glVertex2f(x - boxW/2, y + boxH/2);
         glEnd();
 
         glColor4f(rC, gC, bC, 0.35f);
         glBegin(GL_QUADS);
-            glVertex2f(x - boxW/2, y - boxH/2);
-            glVertex2f(x + boxW/2, y - boxH/2);
-            glVertex2f(x + boxW/2, y - boxH/2 + boxH * fill);
-            glVertex2f(x - boxW/2, y - boxH/2 + boxH * fill);
+        glVertex2f(x - boxW/2, y - boxH/2);
+        glVertex2f(x + boxW/2, y - boxH/2);
+        glVertex2f(x + boxW/2, y - boxH/2 + boxH * fill);
+        glVertex2f(x - boxW/2, y - boxH/2 + boxH * fill);
         glEnd();
 
         glEnable(GL_TEXTURE_2D);
@@ -1334,10 +1376,10 @@ void render()
     // scrolling starfield background
     glBindTexture(GL_TEXTURE_2D, g.tex.backTex);
     glBegin(GL_QUADS);
-        glTexCoord2f(g.tex.xc[0], g.tex.yc[1]); glVertex2i(0,      0);
-        glTexCoord2f(g.tex.xc[0], g.tex.yc[0]); glVertex2i(0,      g.yres);
-        glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres, g.yres);
-        glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres, 0);
+    glTexCoord2f(g.tex.xc[0], g.tex.yc[1]); glVertex2i(0,      0);
+    glTexCoord2f(g.tex.xc[0], g.tex.yc[0]); glVertex2i(0,      g.yres);
+    glTexCoord2f(g.tex.xc[1], g.tex.yc[0]); glVertex2i(g.xres, g.yres);
+    glTexCoord2f(g.tex.xc[1], g.tex.yc[1]); glVertex2i(g.xres, 0);
     glEnd();
 
     if (g.state == STATE_TITLE) {
@@ -1361,6 +1403,12 @@ void render()
 
     if (g.state == STATE_LEVEL_INTRO)
         renderLevelIntro();
+
+    if (g.state == STATE_LEVEL_COMPLETE)
+        levelsRenderComplete();
+
+    if (g.state == STATE_DEAD)
+        levelsRenderDeath();
 
     if (g.state == STATE_PLAYING) {
         renderHealthBar();
