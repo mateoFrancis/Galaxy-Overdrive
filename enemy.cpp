@@ -149,6 +149,7 @@ static int        explosionW = 0, explosionH = 0;
 const int MAX_ENEMIES = 20;
 Enemy enemies[MAX_ENEMIES];
 
+
 static const int   EXPLOSION_FRAMES      = 6;
 static const float EXPLOSION_FRAME_TIME  = 0.08f;
 
@@ -213,10 +214,10 @@ void spawn_enemy(float playerX, float playerY, int screenW, int screenH)
 
             if (enemies[i].type == 1) {
                 enemies[i].speed = 3.2f;
-                enemies[i].hp = 1;
+                enemies[i].hp = 2;
             } else {
                 enemies[i].speed = 2.0f;
-                enemies[i].hp = 2;
+                enemies[i].hp = 3;
             }
 
             int side = rand() % 4;
@@ -287,7 +288,7 @@ void enemies_physics(float playerX, float playerY, int screenW, int screenH, flo
     }
 }
 
-int enemy_check_bullet_hit(float bx, float by, float br)
+int enemy_check_bullet_hit(float bx, float by, float br, int weapon)
 {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active) continue;
@@ -299,9 +300,19 @@ int enemy_check_bullet_hit(float bx, float by, float br)
         float rsum = er + br;
 
         if (dx*dx + dy*dy < rsum*rsum) {
-            enemies[i].hp--;
+
+            int damage = 1;
+
+            // weapon rules
+            if (weapon == 1) { 
+                damage = 2; // rocket
+            }
+
+            enemies[i].hp -= damage;
+
             if (enemies[i].hp <= 0)
                 start_explosion(enemies[i]);
+
             return i;
         }
     }

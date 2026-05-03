@@ -20,9 +20,11 @@ float g_time  = 0.0f;
 #include "obstacles.cpp"
 
 #define MAX_BULLETS 50
-#define POWERUP_COUNT 11
+#define POWERUP_COUNT 10
 const int VIRTUAL_W = 640;
 const int VIRTUAL_H = 480;
+const float TARGET_FPS = 30.0f;
+const float FRAME_TIME = 1.0f / TARGET_FPS; // ~0.0333 sec
 
 enum GameState {
     STATE_TITLE,
@@ -124,6 +126,7 @@ struct Bullet {
     int   frame;
     float frameTimer;
     float angle;
+    int bounces;
 };
 
 struct Powerups {
@@ -201,11 +204,11 @@ class Global {
         Global()
             : xres(640), yres(480),
             mousex(320), mousey(240),
-            spacePressed(0), movSwitch(0), currentWeapon(0),
+            spacePressed(0), movSwitch(1), currentWeapon(0),
             weaponFrame(0), weaponTimer(0.0f),
             shipx(320.0f), shipy(160.0f),
             ShipSpeed(6.0f), shipAngle(0.0f),
-            fps(0), playerHP(100), score(0),
+            fps(0), playerHP(10), score(0),
             spawnTimer(0.0f), spawnInterval(2.0f),
             state(STATE_TITLE), levelIntroTimer(0.0f), currentLevel(1)
     {
@@ -359,6 +362,10 @@ int main()
     time_t secTimer = time(NULL);
 
     while (!done) {
+        
+        struct timespec frameStart;
+        clock_gettime(CLOCK_MONOTONIC, &frameStart);
+
         while (x11.getXPending()) {
             XEvent e = x11.getXNextEvent();
             x11.check_resize(&e);
@@ -391,6 +398,22 @@ int main()
             secTimer = now;
             g.fps    = nframes;
             nframes  = 0;
+        }
+
+        struct timespec frameEnd;
+        clock_gettime(CLOCK_MONOTONIC, &frameEnd);
+            
+        float frameDuration =
+            (frameEnd.tv_sec - frameStart.tv_sec) +
+            (frameEnd.tv_nsec - frameStart.tv_nsec) * 1e-9f;
+            
+        if (frameDuration < FRAME_TIME) {
+            float sleepTime = FRAME_TIME - frameDuration;
+        
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = (long)(sleepTime * 1e9);
+            nanosleep(&ts, NULL);
         }
 
         x11.swapBuffers();
@@ -686,7 +709,7 @@ static float getScaleX() { return (float)g.xres / (float)VIRTUAL_W; }
 static float getScaleY() { return (float)g.yres / (float)VIRTUAL_H; }
 static float getScale()  { return fminf(getScaleX(), getScaleY()); }
 
-static const float FIRE_COOLDOWN       = 0.3f;
+static const float FIRE_COOLDOWN       = 0.5f;
 static const float ANIM_SPEED_MULT     = 2.0f;
 static const float SHIP_COLLISION_RAD  = 22.0f;
 static const float BULLET_COLLISION_RAD= 8.0f;
@@ -700,7 +723,6 @@ const char* POWERUPS[] = {
     "Damage++",
     "Homing Tech",
     "Piercing Tech",
-    "Zapper",
     "Space Gun",
     "Rockets"
 };
@@ -760,9 +782,8 @@ void pickPowerup(int choiceIndex)
         case 5:  g.powerups.damageLevel   += 2; break;
         case 6:  g.powerups.homing  = true;     break;
         case 7:  g.powerups.pierce  = true;     break;
-        case 8:  g.currentWeapon = 3;           break;
-        case 9:  g.currentWeapon = 2;           break;
-        case 10: g.currentWeapon = 1;           break;
+        case 8:  g.currentWeapon = 2;           break;
+        case 9: g.currentWeapon = 1;           break;
     }
 
     for (int i = 0; i < g.availableCount; i++) {
@@ -825,24 +846,33 @@ void physics(float dt)
     float fireCooldown = FIRE_COOLDOWN / (1.0f + 0.25f * g.powerups.fireRateLevel);
     float dx = 0, dy = 0;
 
-    if (g.keys[XK_w]) { dx += cosA * movSpd; dy += sinA * movSpd; }
+    float mx = g.mousex - g.shipx;
+    float my = g.mousey - g.shipy;
+    float distSq = mx * mx + my * my;
+
+   if (g.keys[XK_w]) {
+    // Stop moving if you're basically on the mouse
+    if (!g.movSwitch || distSq > 25.0f) {
+        dx += cosA * movSpd;
+        dy += sinA * movSpd;
+    }
+}
     if (g.keys[XK_s] && !g.movSwitch) { dx -= cosA * movSpd; dy -= sinA * movSpd; }
     if (g.keys[XK_a]) {
-        if (g.movSwitch) { dx -= sinA * movSpd; dy += cosA * movSpd; }
-        else g.shipAngle += rotSpd;
+        //if (g.movSwitch) { dx -= sinA * movSpd; dy += cosA * movSpd; }
+         g.shipAngle += rotSpd;
     }
     if (g.keys[XK_d]) {
-        if (g.movSwitch) { dx += sinA * movSpd; dy -= cosA * movSpd; }
-        else g.shipAngle -= rotSpd;
+        //if (g.movSwitch) { dx += sinA * movSpd; dy -= cosA * movSpd; }
+         g.shipAngle -= rotSpd;
     }
 
     g.shipx += dx; g.shipy += dy;
     g.shipx = fmaxf(0, fminf(g.shipx, (float)g.xres));
     g.shipy = fmaxf(0, fminf(g.shipy, (float)g.yres));
 
-    if (g.movSwitch) {
-        float mx = g.mousex - g.shipx;
-        float my = g.mousey - g.shipy;
+
+    if (g.movSwitch && distSq > 4.0f) {
         g.shipAngle = atan2f(my, mx) * 180.0f / (float)M_PI;
     }
 
@@ -869,6 +899,7 @@ void physics(float dt)
                     float rb = g.shipAngle * (float)M_PI / 180.0f;
                     g.bullets[i].xVel = cosf(rb) * g.bullets[i].vel;
                     g.bullets[i].yVel = sinf(rb) * g.bullets[i].vel;
+                    g.bullets[i].bounces = 0;
                     break;
                 }
             }
@@ -945,10 +976,10 @@ void physics(float dt)
 
         int t = g.bullets[i].type;
         if (t != 3 &&
-                (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
-                 g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20)) {
-            if (!g.powerups.pierce)
-                g.bullets[i].active = 0;
+            (g.bullets[i].x < -20 || g.bullets[i].x > g.xres + 20 ||
+             g.bullets[i].y < -20 || g.bullets[i].y > g.yres + 20)) {
+            
+            g.bullets[i].active = 0;
         }
 
         if (!g.bullets[i].active) continue;
@@ -972,6 +1003,7 @@ void physics(float dt)
         }
 
         if (g.state == STATE_PLAYING) {
+            
             int hit = obstaclesCheckBulletAsteroid(
                     g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
             if (hit >= 0) {
@@ -989,11 +1021,46 @@ void physics(float dt)
 
 
             int eHit = enemy_check_bullet_hit(
-                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD);
+                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD, g.currentWeapon);
             if (eHit >= 0) {
-                if (!g.powerups.pierce) g.bullets[i].active = 0;
+
+                if (g.bullets[i].type == 2) { // space gun
+                
+g.bullets[i].bounces++;
+
+if (g.bullets[i].bounces >= 3) {
+    g.bullets[i].active = 0;
+} else {
+
+    // reflect direction
+    g.bullets[i].xVel *= -1;
+    g.bullets[i].yVel *= -1;
+
+    // convert to angle
+    float angle = atan2f(g.bullets[i].yVel, g.bullets[i].xVel);
+
+    // apply angular jitter (this is the key fix)
+    float jitter = ((rand() % 21) - 10) * 0.02f; // radians (~±0.2 rad)
+
+    angle += jitter;
+
+    float speed = g.bullets[i].vel;
+
+    g.bullets[i].xVel = cosf(angle) * speed;
+    g.bullets[i].yVel = sinf(angle) * speed;
+
+    // small nudge so it doesn't instantly re-collide
+    g.bullets[i].x += g.bullets[i].xVel * 2;
+    g.bullets[i].y += g.bullets[i].yVel * 2;
+}
+                
+                } else {
+                    if (!g.powerups.pierce)
+                        g.bullets[i].active = 0;
+                }
+            
                 g.score += 15;
-                levelsOnEnemyKilled();  
+                levelsOnEnemyKilled();
                 continue;
             }
 
@@ -1105,6 +1172,57 @@ void physics(float dt)
                 g.powerupFill[i] -= dt * 0.5f;
                 if (g.powerupFill[i] < 0.0f) g.powerupFill[i] = 0.0f;
             }
+        }
+    }
+}
+
+void renderShipBreakup()
+{
+    float s = getScale();
+
+    int cols = 3;
+    int rows = 2;
+
+    float fullW = 60.0f * s;
+    float fullH = 60.0f * s;
+
+    float w = fullW / cols;
+    float h = fullH / rows;
+
+    float tileW = 1.0f / cols;
+    float tileH = 1.0f / rows;
+
+    glBindTexture(GL_TEXTURE_2D, g.tex.ship01Tex);
+
+    int idx = 0;
+
+    for (int y = 0; y < rows; y++) {
+        for (int x = 0; x < cols; x++) {
+
+            float tx0 = x * tileW;
+            float tx1 = tx0 + tileW;
+            float ty0 = y * tileH;
+            float ty1 = ty0 + tileH;
+
+            // center the breakup grid around ship position
+            float offsetX = (x - (cols - 1) * 0.5f) * w;
+            float offsetY = (y - (rows - 1) * 0.5f) * h;
+
+            glPushMatrix();
+            glTranslatef(g.shipx + offsetX, g.shipy + offsetY, 0);
+            glRotatef(g.shipAngle - 90.0f, 0, 0, 1);
+
+            glBegin(GL_QUADS);
+            glTexCoord2f(tx0, ty1); glVertex2f(-w/2, -h/2);
+            glTexCoord2f(tx0, ty0); glVertex2f(-w/2,  h/2);
+            glTexCoord2f(tx1, ty0); glVertex2f( w/2,  h/2);
+            glTexCoord2f(tx1, ty1); glVertex2f( w/2, -h/2);
+            glEnd();
+
+            glPopMatrix();
+
+            idx++;
+            if (idx >= 6) return;
         }
     }
 }
@@ -1223,7 +1341,7 @@ void renderBullets()
 
 void renderHealthBar()
 {
-    float maxHP = 100.0f;
+    float maxHP = 10.0f;
     float target = g.playerHP;
 
     g.displayHP += (target - g.displayHP) * 0.1f;
@@ -1351,11 +1469,10 @@ static void renderHUD()
     r.left   = 10;
     r.center = 0;
 
-    ggprint12(&r, 2, 0x00ffffff, "K - switch weapon");   r.bot -= 20;
     ggprint12(&r, 2, 0x00ffffff, "Spacebar - shoot");     r.bot -= 20;
     ggprint12(&r, 2, 0x00ffffff, "P - pause");            r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "WASD - movement");      r.bot -= 20;
-    ggprint12(&r, 2, 0x00ffffff, "M - alt move (W+Mouse)"); r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "Mouse + W - movement");      r.bot -= 20;
+    ggprint12(&r, 2, 0x00ffffff, "M - alt move (WASD)"); r.bot -= 20;
 
     if (g.state == STATE_PLAYING) {
         ggprint12(&r, 2, 0x00ffffff, "R - reset obstacles"); r.bot -= 20;
@@ -1398,7 +1515,12 @@ void render()
     }
 
     glColor4f(1, 1, 1, 1);
-    renderShip();
+    
+    if (g.state == STATE_DEAD)
+        renderShipBreakup();
+    else
+        renderShip();
+        
     renderBullets();
 
     if (g.state == STATE_LEVEL_INTRO)
