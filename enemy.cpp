@@ -288,7 +288,7 @@ void enemies_physics(float playerX, float playerY, int screenW, int screenH, flo
     }
 }
 
-int enemy_check_bullet_hit(float bx, float by, float br, int weapon)
+int enemy_check_bullet_hit(float bx, float by, float br, int weapon, int damage)
 {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active) continue;
@@ -301,14 +301,14 @@ int enemy_check_bullet_hit(float bx, float by, float br, int weapon)
 
         if (dx*dx + dy*dy < rsum*rsum) {
 
-            int damage = 1;
+            int finalDamage = damage; // start with powerup-scaled damage
 
-            // weapon rules
+            // weapon bonus (ADD, don't overwrite)
             if (weapon == 1) { 
-                damage = 2; // rocket
+                finalDamage += 1; // rocket bonus
             }
 
-            enemies[i].hp -= damage;
+            enemies[i].hp -= finalDamage;
 
             if (enemies[i].hp <= 0)
                 start_explosion(enemies[i]);

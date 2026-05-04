@@ -783,11 +783,13 @@ void pickPowerup(int choiceIndex)
         case 6:  g.powerups.homing  = true;     break;
         case 7:  g.powerups.pierce  = true;     break;
         case 8:  g.currentWeapon = 2;           break;
-        case 9: g.currentWeapon = 1;           break;
+        case 9: g.currentWeapon = 1;            break;
     }
 
     for (int i = 0; i < g.availableCount; i++) {
+
         if (g.availablePowerups[i] == id) {
+
             g.availablePowerups[i] = g.availablePowerups[--g.availableCount];
             break;
         }
@@ -813,7 +815,7 @@ void physics(float dt)
         g.levelIntroTimer += dt;
         if (g.levelIntroTimer >= 2.0f) {
             g.playerHP        = 10;
-            g.displayHP       = 100.f;
+            g.displayHP       = 10.f;
             g.state           = STATE_PLAYING;
             g.levelIntroTimer = 0.0f;
             // Load the level matching lv_current (set by levelsHandleKey or
@@ -851,7 +853,7 @@ void physics(float dt)
     float distSq = mx * mx + my * my;
 
    if (g.keys[XK_w]) {
-    // Stop moving if you're basically on the mouse
+    
     if (!g.movSwitch || distSq > 25.0f) {
         dx += cosA * movSpd;
         dy += sinA * movSpd;
@@ -1021,7 +1023,7 @@ void physics(float dt)
 
 
             int eHit = enemy_check_bullet_hit(
-                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD, g.currentWeapon);
+                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD, g.currentWeapon, g.bullets[i].damage);
             if (eHit >= 0) {
 
                 if (g.bullets[i].type == 2) { // space gun

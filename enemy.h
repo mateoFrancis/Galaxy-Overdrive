@@ -34,7 +34,7 @@ void spawn_enemy(float playerX, float playerY, int screenW, int screenH);
 void enemies_physics(float playerX, float playerY, int screenW, int screenH, float dt);
 void render_enemies();
 
-int enemy_check_bullet_hit(float bx, float by, float br, int weapon);
+int enemy_check_bullet_hit(float bx, float by, float br, int weapon, int damage);
 bool enemy_check_player_collision(float px, float py, float pr);
 
 // shared explosion sprite for reuse by obstacles

@@ -703,8 +703,8 @@ bool levelsHandleKey(int key)
         if (key == XK_r) {
             // Restart current level
             lv_loadLevel(lv_current);
-            g.playerHP  = 100;
-            g.displayHP = 100.f;
+            g.playerHP  = 10;
+            g.displayHP = 10.f;
             g.score     = 0;
             g.state     = STATE_LEVEL_INTRO;
             g.levelIntroTimer = 0.f;
@@ -715,8 +715,8 @@ bool levelsHandleKey(int key)
         if (key == XK_m) {
             // Return to main menu
             g.state     = STATE_TITLE;
-            g.playerHP  = 100;
-            g.displayHP = 100.f;
+            g.playerHP  = 10;
+            g.displayHP = 10.f;
             g.score     = 0;
             lv_current  = 0;
             s_debrisInited = false;
@@ -748,8 +748,8 @@ bool levelsHandleKey(int key)
             lv_selectOpen  = false;
             g.paused       = false;
             g.state        = STATE_PLAYING;
-            g.playerHP     = 100;
-            g.displayHP    = 100.f;
+            g.playerHP     = 10;
+            g.displayHP    = 10.f;
             g.score        = 0;
             init_enemies();
             return true;
@@ -772,8 +772,8 @@ bool levelsHandleKey(int key)
         lv_loadLevel(lvIdx);
         g.paused    = false;
         g.state     = STATE_PLAYING;
-        g.playerHP  = 100;
-        g.displayHP = 100.f;
+        g.playerHP  = 10;
+        g.displayHP = 10.f;
         g.score     = 0;
         init_enemies();
         return true;
@@ -782,8 +782,8 @@ bool levelsHandleKey(int key)
     if (key == XK_n) {
         int next = (lv_current + 1) % TOTAL_LEVELS;
         lv_loadLevel(next);
-        g.playerHP  = 100;
-        g.displayHP = 100.f;
+        g.playerHP  = 10;
+        g.displayHP = 10.f;
         g.score     = 0;
         g.state     = STATE_PLAYING;
         g.paused    = false;
