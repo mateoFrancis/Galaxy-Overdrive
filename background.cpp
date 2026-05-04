@@ -710,9 +710,12 @@ static float getScaleY() { return (float)g.yres / (float)VIRTUAL_H; }
 static float getScale()  { return fminf(getScaleX(), getScaleY()); }
 
 static const float FIRE_COOLDOWN       = 0.5f;
-static const float ANIM_SPEED_MULT     = 2.0f;
+static const float ANIM_SPEED_MULT     = 1.0f;
 static const float SHIP_COLLISION_RAD  = 22.0f;
 static const float BULLET_COLLISION_RAD= 8.0f;
+
+float weaponAnimTimer = 0.0f;
+float weaponAnimSpeed = 0.1f; // smaller = faster (try 0.03f–0.06f)
 
 const char* POWERUPS[] = {
     "Fire Rate+",
@@ -884,9 +887,12 @@ void physics(float dt)
         (g.currentWeapon == 1) ? 16 :
         (g.currentWeapon == 2) ? 12 : 14;
 
+    // ---- FIRE WEAPON ----
     if (g.spacePressed && g.currentWeapon != 3) {
+    
         if (g.weaponTimer >= fireCooldown) {
             g.weaponTimer = 0.0f;
+        
             for (int i = 0; i < MAX_BULLETS; i++) {
                 if (!g.bullets[i].active) {
                     g.bullets[i].active     = 1;
@@ -898,6 +904,7 @@ void physics(float dt)
                     g.bullets[i].frame      = 0;
                     g.bullets[i].frameTimer = 0.0f;
                     g.bullets[i].angle      = g.shipAngle;
+                
                     float rb = g.shipAngle * (float)M_PI / 180.0f;
                     g.bullets[i].xVel = cosf(rb) * g.bullets[i].vel;
                     g.bullets[i].yVel = sinf(rb) * g.bullets[i].vel;
@@ -905,11 +912,7 @@ void physics(float dt)
                     break;
                 }
             }
-            g.weaponFrame = (g.weaponFrame + (int)ANIM_SPEED_MULT) % maxFrames;
-            if (g.weaponFrame == 0) g.weaponFrame = 1;
         }
-    } else if (g.currentWeapon != 3) {
-        g.weaponFrame = 0;
     }
 
     if (g.currentWeapon == 3) {
@@ -938,6 +941,23 @@ void physics(float dt)
                 if (g.bullets[i].type == 3) g.bullets[i].active = 0;
             g.weaponFrame = 0;
         }
+    }
+    // 
+    if (g.spacePressed && g.currentWeapon != 3) {
+
+        weaponAnimTimer += dt;
+
+        if (weaponAnimTimer >= weaponAnimSpeed) {
+            weaponAnimTimer = 0.0f;
+            g.weaponFrame = (g.weaponFrame + 1) % maxFrames;
+
+            if (g.weaponFrame == 0)
+                g.weaponFrame = 1;
+        }
+
+    } else if (g.currentWeapon != 3) {
+        g.weaponFrame = 0;
+        weaponAnimTimer = 0.0f;
     }
 
     float bulletAnimIntervals[4] = { 0.1f, 0.08f, 0.05f, 0.07f };
@@ -1177,6 +1197,7 @@ if (g.bullets[i].bounces >= 3) {
         }
     }
 }
+
 
 void renderShipBreakup()
 {
