@@ -20,13 +20,16 @@ public:
 
         char name[128];
         snprintf(name, sizeof(name), "%s", fname);
+
         int slen = strlen(name);
+
         if (slen < 5) {
             printf("bad image filename: %s\n", fname);
             return;
         }
 
         name[slen - 4] = '\0';
+
         char ppmname[160];
         snprintf(ppmname, sizeof(ppmname), "%s.ppm", name);
 
@@ -35,14 +38,17 @@ public:
         system(ts);
 
         FILE *fpi = fopen(ppmname, "rb");
+
         if (!fpi) {
             printf("ERROR opening image: %s\n", ppmname);
             return;
         }
 
         char line[200];
+
         fgets(line, 200, fpi);
         fgets(line, 200, fpi);
+
         while (line[0] == '#')
             fgets(line, 200, fpi);
 
@@ -56,14 +62,11 @@ public:
             unsigned char r = fgetc(fpi);
             unsigned char g = fgetc(fpi);
             unsigned char b = fgetc(fpi);
+
             data[i * 4 + 0] = r;
             data[i * 4 + 1] = g;
             data[i * 4 + 2] = b;
-
-            if (r < 50 && g < 50 && b < 50)
-                data[i * 4 + 3] = 0;
-            else
-                data[i * 4 + 3] = 255;
+            data[i * 4 + 3] = (r < 20 && g < 20 && b < 20) ? 0 : 255;
         }
 
         fclose(fpi);
@@ -75,63 +78,93 @@ public:
     }
 };
 
-// load png keeping its real alpha channel
+// shared png loader with alpha
 void load_png_with_alpha(const char *fname, int *outW, int *outH, unsigned char **outData)
 {
-    *outW = 0; *outH = 0; *outData = NULL;
-    if (!fname || fname[0] == '\0') return;
+    *outW = 0;
+    *outH = 0;
+    *outData = NULL;
+
+    if (!fname || fname[0] == '\0')
+        return;
 
     char name[128];
     snprintf(name, sizeof(name), "%s", fname);
+
     int slen = strlen(name);
-    if (slen < 5) return;
+
+    if (slen < 5)
+        return;
+
     name[slen - 4] = '\0';
 
     char ppmname[160], pgmname[160];
+
     snprintf(ppmname, sizeof(ppmname), "%s.ppm", name);
     snprintf(pgmname, sizeof(pgmname), "%s_a.pgm", name);
 
     char ts[512];
+
     snprintf(ts, sizeof(ts), "convert %s %s", fname, ppmname);
     system(ts);
+
     snprintf(ts, sizeof(ts), "convert %s -alpha extract %s", fname, pgmname);
     system(ts);
 
     FILE *fpi = fopen(ppmname, "rb");
-    if (!fpi) { printf("ERROR opening %s\n", ppmname); return; }
+
+    if (!fpi) {
+        printf("ERROR opening %s\n", ppmname);
+        return;
+    }
 
     char line[200];
+
     fgets(line, 200, fpi);
     fgets(line, 200, fpi);
-    while (line[0] == '#') fgets(line, 200, fpi);
+
+    while (line[0] == '#')
+        fgets(line, 200, fpi);
+
     int w, h;
+
     sscanf(line, "%i %i", &w, &h);
     fgets(line, 200, fpi);
 
     unsigned char *data = new unsigned char[w * h * 4];
+
     for (int i = 0; i < w * h; i++) {
-        data[i*4+0] = fgetc(fpi);
-        data[i*4+1] = fgetc(fpi);
-        data[i*4+2] = fgetc(fpi);
-        data[i*4+3] = 255;
+        data[i * 4 + 0] = fgetc(fpi);
+        data[i * 4 + 1] = fgetc(fpi);
+        data[i * 4 + 2] = fgetc(fpi);
+        data[i * 4 + 3] = 255;
     }
+
     fclose(fpi);
 
     FILE *fpa = fopen(pgmname, "rb");
+
     if (fpa) {
         fgets(line, 200, fpa);
         fgets(line, 200, fpa);
-        while (line[0] == '#') fgets(line, 200, fpa);
+
+        while (line[0] == '#')
+            fgets(line, 200, fpa);
+
         int aw, ah;
+
         sscanf(line, "%i %i", &aw, &ah);
         fgets(line, 200, fpa);
+
         if (aw == w && ah == h) {
             for (int i = 0; i < w * h; i++)
-                data[i*4+3] = fgetc(fpa);
+                data[i * 4 + 3] = fgetc(fpa);
         }
+
         fclose(fpa);
         unlink(pgmname);
     }
+
     unlink(ppmname);
 
     *outW = w;
@@ -139,65 +172,70 @@ void load_png_with_alpha(const char *fname, int *outW, int *outH, unsigned char 
     *outData = data;
 }
 
-static EnemyImage enemyImg1;
-static EnemyImage enemyImg2;
-static GLuint     enemyTex1;
-static GLuint     enemyTex2;
-static GLuint     explosionTex;
-static int        explosionW = 0, explosionH = 0;
+static EnemyImage enemyImg1, enemyImg2;
+static GLuint enemyTex1, enemyTex2, explosionTex;
+static int explosionW = 0, explosionH = 0;
 
 const int MAX_ENEMIES = 20;
 Enemy enemies[MAX_ENEMIES];
 
+static const int   EXPLOSION_FRAMES     = 6;
+static const float EXPLOSION_FRAME_TIME = 0.08f;
 
-static const int   EXPLOSION_FRAMES      = 6;
-static const float EXPLOSION_FRAME_TIME  = 0.08f;
-
-GLuint get_explosion_texture()     { return explosionTex; }
-int    get_explosion_frames()      { return EXPLOSION_FRAMES; }
-float  get_explosion_frame_time()  { return EXPLOSION_FRAME_TIME; }
+GLuint get_explosion_texture()    { return explosionTex; }
+int    get_explosion_frames()     { return EXPLOSION_FRAMES; }
+float  get_explosion_frame_time() { return EXPLOSION_FRAME_TIME; }
 
 static void upload_enemy_tex(GLuint *tex, EnemyImage *img)
 {
     glGenTextures(1, tex);
     glBindTexture(GL_TEXTURE_2D, *tex);
+
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-        img->width, img->height,
-        0, GL_RGBA, GL_UNSIGNED_BYTE, img->data);
+                 img->width, img->height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, img->data);
 }
 
 void init_enemies()
 {
     enemyImg1.load("enemy.png");
     enemyImg2.load("enemy2.png");
+
     upload_enemy_tex(&enemyTex1, &enemyImg1);
     upload_enemy_tex(&enemyTex2, &enemyImg2);
 
-    // load explosion with real alpha
     unsigned char *expData = NULL;
+
     load_png_with_alpha("explosion.png", &explosionW, &explosionH, &expData);
+
     if (expData) {
         glGenTextures(1, &explosionTex);
         glBindTexture(GL_TEXTURE_2D, explosionTex);
+
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, explosionW, explosionH,
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                     explosionW, explosionH,
                      0, GL_RGBA, GL_UNSIGNED_BYTE, expData);
-        delete[] expData;
+
+        delete [] expData;
     }
 }
 
 static void start_explosion(Enemy &e)
 {
-    e.exploding     = true;
-    e.explodeFrame  = 0;
-    e.explodeTimer  = 0.0f;
-    e.velx          = 0.0f;
-    e.vely          = 0.0f;
+    e.exploding = true;
+    e.explodeFrame = 0;
+    e.explodeTimer = 0.0f;
+    e.velx = 0.0f;
+    e.vely = 0.0f;
 }
 
+// spawn one enemy just outside the screen
 void spawn_enemy(float playerX, float playerY, int screenW, int screenH)
 {
     for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -208,19 +246,19 @@ void spawn_enemy(float playerX, float playerY, int screenW, int screenH)
             enemies[i].explodeTimer = 0.0f;
 
             enemies[i].type = rand() % 2;
-
             enemies[i].width = 64;
             enemies[i].height = 64;
 
             if (enemies[i].type == 1) {
                 enemies[i].speed = 3.2f;
-                enemies[i].hp = 2;
+                enemies[i].hp = 1;
             } else {
                 enemies[i].speed = 2.0f;
-                enemies[i].hp = 3;
+                enemies[i].hp = 2;
             }
 
             int side = rand() % 4;
+
             if (side == 0) {
                 enemies[i].x = -enemies[i].width;
                 enemies[i].y = rand() % screenH;
@@ -246,6 +284,7 @@ void spawn_enemy(float playerX, float playerY, int screenW, int screenH)
                 enemies[i].velx = 0.0f;
                 enemies[i].vely = 0.0f;
             }
+
             return;
         }
     }
@@ -259,13 +298,15 @@ void enemies_physics(float playerX, float playerY, int screenW, int screenH, flo
 
         if (enemies[i].exploding) {
             enemies[i].explodeTimer += dt;
+
             if (enemies[i].explodeTimer >= EXPLOSION_FRAME_TIME) {
                 enemies[i].explodeTimer = 0.0f;
                 enemies[i].explodeFrame++;
-                if (enemies[i].explodeFrame >= EXPLOSION_FRAMES) {
+
+                if (enemies[i].explodeFrame >= EXPLOSION_FRAMES)
                     enemies[i].active = false;
-                }
             }
+
             continue;
         }
 
@@ -288,60 +329,69 @@ void enemies_physics(float playerX, float playerY, int screenW, int screenH, flo
     }
 }
 
-int enemy_check_bullet_hit(float bx, float by, float br, int weapon, int damage)
+// returns -1 for no hit, 0 for hit, 1 for killed
+int enemy_check_bullet_hit(float bx, float by, float br, int weapon)
 {
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) continue;
-        if (enemies[i].exploding) continue;
+        if (!enemies[i].active)
+            continue;
+
+        if (enemies[i].exploding)
+            continue;
 
         float er = enemies[i].width * 0.4f;
         float dx = bx - enemies[i].x;
         float dy = by - enemies[i].y;
         float rsum = er + br;
 
-        if (dx*dx + dy*dy < rsum*rsum) {
+        if (dx * dx + dy * dy < rsum * rsum) {
+            int damage = 1;
 
-            int finalDamage = damage; // start with powerup-scaled damage
+            if (weapon == 1)
+                damage = 2;
 
-            // weapon bonus (ADD, don't overwrite)
-            if (weapon == 1) { 
-                finalDamage += 1; // rocket bonus
+            enemies[i].hp -= damage;
+
+            if (enemies[i].hp <= 0) {
+                start_explosion(enemies[i]);
+                return 1;
             }
 
-            enemies[i].hp -= finalDamage;
-
-            if (enemies[i].hp <= 0)
-                start_explosion(enemies[i]);
-
-            return i;
+            return 0;
         }
     }
+
     return -1;
 }
 
 bool enemy_check_player_collision(float px, float py, float pr)
 {
     bool hit = false;
+
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) continue;
-        if (enemies[i].exploding) continue;
+        if (!enemies[i].active)
+            continue;
+
+        if (enemies[i].exploding)
+            continue;
 
         float er = enemies[i].width * 0.4f;
         float dx = px - enemies[i].x;
         float dy = py - enemies[i].y;
         float rsum = er + pr;
 
-        if (dx*dx + dy*dy < rsum*rsum) {
+        if (dx * dx + dy * dy < rsum * rsum) {
             start_explosion(enemies[i]);
             hit = true;
         }
     }
+
     return hit;
 }
 
 void render_enemies()
 {
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glColor4f(1, 1, 1, 1);
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active)
@@ -358,14 +408,17 @@ void render_enemies()
             float tx1 = tx0 + frameW;
 
             glBindTexture(GL_TEXTURE_2D, explosionTex);
+
             glPushMatrix();
-            glTranslatef(x, y, 0.0f);
+            glTranslatef(x, y, 0);
+
             glBegin(GL_QUADS);
-                glTexCoord2f(tx0, 1.0f); glVertex2f(-w, -h);
-                glTexCoord2f(tx0, 0.0f); glVertex2f(-w,  h);
-                glTexCoord2f(tx1, 0.0f); glVertex2f( w,  h);
-                glTexCoord2f(tx1, 1.0f); glVertex2f( w, -h);
+            glTexCoord2f(tx0, 1); glVertex2f(-w, -h);
+            glTexCoord2f(tx0, 0); glVertex2f(-w,  h);
+            glTexCoord2f(tx1, 0); glVertex2f( w,  h);
+            glTexCoord2f(tx1, 1); glVertex2f( w, -h);
             glEnd();
+
             glPopMatrix();
             continue;
         }
@@ -373,35 +426,39 @@ void render_enemies()
         float degrees = atan2(enemies[i].vely, enemies[i].velx) * (180.0f / M_PI);
 
         glBindTexture(GL_TEXTURE_2D,
-            (enemies[i].type == 1) ? enemyTex2 : enemyTex1);
+                      (enemies[i].type == 1) ? enemyTex2 : enemyTex1);
 
         glPushMatrix();
-        glTranslatef(x, y, 0.0f);
-        glRotatef(degrees - 90.0f, 0.0f, 0.0f, 1.0f);
+        glTranslatef(x, y, 0);
+        glRotatef(degrees - 90, 0, 0, 1);
 
         glBegin(GL_QUADS);
-            glTexCoord2f(0.0f, 1.0f); glVertex2f(-w, -h);
-            glTexCoord2f(0.0f, 0.0f); glVertex2f(-w,  h);
-            glTexCoord2f(1.0f, 0.0f); glVertex2f( w,  h);
-            glTexCoord2f(1.0f, 1.0f); glVertex2f( w, -h);
+        glTexCoord2f(0, 1); glVertex2f(-w, -h);
+        glTexCoord2f(0, 0); glVertex2f(-w,  h);
+        glTexCoord2f(1, 0); glVertex2f( w,  h);
+        glTexCoord2f(1, 1); glVertex2f( w, -h);
         glEnd();
 
         glPopMatrix();
     }
 }
 
+// used by homing bullets
 int find_nearest_enemy(float x, float y, float &outX, float &outY)
 {
     float bestDist = 9999999.0f;
     int bestIndex = -1;
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) continue;
-        if (enemies[i].exploding) continue;
+        if (!enemies[i].active)
+            continue;
+
+        if (enemies[i].exploding)
+            continue;
 
         float dx = enemies[i].x - x;
         float dy = enemies[i].y - y;
-        float dist = dx*dx + dy*dy; // squared distance
+        float dist = dx * dx + dy * dy;
 
         if (dist < bestDist) {
             bestDist = dist;

@@ -10,11 +10,11 @@ public:
     float speed;
     int width, height;
     int hp;
-    int type;       // 0 = enemy.png, 1 = enemy2.png
+    int type;       // 0 uses enemy.png, 1 uses enemy2.png
     bool active;
 
-    bool  exploding;
-    int   explodeFrame;
+    bool exploding;
+    int explodeFrame;
     float explodeTimer;
 
     Enemy() :
@@ -34,15 +34,17 @@ void spawn_enemy(float playerX, float playerY, int screenW, int screenH);
 void enemies_physics(float playerX, float playerY, int screenW, int screenH, float dt);
 void render_enemies();
 
-int enemy_check_bullet_hit(float bx, float by, float br, int weapon, int damage);
+int enemy_check_bullet_hit(float bx, float by, float br, int weapon);
 bool enemy_check_player_collision(float px, float py, float pr);
 
-// shared explosion sprite for reuse by obstacles
+// shared explosion sprite
 GLuint get_explosion_texture();
 int    get_explosion_frames();
 float  get_explosion_frame_time();
 
-// shared loader that preserves png alpha channel
+// shared png alpha loader
 void load_png_with_alpha(const char *fname, int *outW, int *outH, unsigned char **outData);
+
 int find_nearest_enemy(float x, float y, float &outX, float &outY);
-#endif
+
+#endif // enemy_h
