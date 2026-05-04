@@ -373,6 +373,7 @@ void initPowerups();
 void generatePowerups();
 void pickPowerup(int);
 void levelsRenderGameWon();
+void resetGame();
 
 int main()
 {
@@ -563,7 +564,11 @@ int check_keys(XEvent *e)
                 return 1;
 
             case XK_equal:
-                g.ShipSpeed = fminf(g.ShipSpeed * 2, 96);
+                g.powerups.speedLevel += 2;
+                g.powerups.damageLevel += 5;
+                g.powerups.fireRateLevel += 7;
+                g.powerups.homing = true;
+                
                 break;
 
             case XK_space:
@@ -590,6 +595,11 @@ int check_keys(XEvent *e)
                     obstaclesReset();
                     g.playerHP = 10;
                 }
+
+                if (g.state == STATE_GAME_WON) {
+                     resetGame();
+                }
+
                 break;
 
             case XK_p:
@@ -788,6 +798,9 @@ static const float ANIM_SPEED_MULT      = 2.0f;
 static const float SHIP_COLLISION_RAD   = 22.0f;
 static const float BULLET_COLLISION_RAD = 8.0f;
 
+float weaponAnimTimer = 0.0f;
+float weaponAnimSpeed = 0.1f; // smaller = faster (try 0.03f–0.06f)
+
 const char* POWERUPS[] = {
     "Fire Rate+",
     "Fire Rate++",
@@ -864,7 +877,7 @@ void pickPowerup(int ci)
             break;
 
         case 1:
-            g.powerups.fireRateLevel += 2;
+            g.powerups.fireRateLevel += 3;
             break;
 
         case 2:
@@ -1089,6 +1102,22 @@ void physics(float dt)
             g.weaponFrame = 0;
         }
     }
+        if (g.spacePressed && g.currentWeapon != 3) {
+
+        weaponAnimTimer += dt;
+
+        if (weaponAnimTimer >= weaponAnimSpeed) {
+            weaponAnimTimer = 0.0f;
+            g.weaponFrame = (g.weaponFrame + 1) % maxFrames;
+
+            if (g.weaponFrame == 0)
+                g.weaponFrame = 1;
+        }
+
+    } else if (g.currentWeapon != 3) {
+        g.weaponFrame = 0;
+        weaponAnimTimer = 0.0f;
+    }
 
     float bai[4] = { 0.1f, 0.08f, 0.05f, 0.07f };
     int bmf[4] = { 4, 3, 10, 8 };
@@ -1182,23 +1211,39 @@ void physics(float dt)
                 continue;
             }
 
-            int bHit = obstaclesCheckBulletBarrier(
-                g.bullets[i].x,
-                g.bullets[i].y,
-                BULLET_COLLISION_RAD);
+        int bHit = obstaclesCheckBulletBarrier(
+            g.bullets[i].x,
+            g.bullets[i].y,
+            BULLET_COLLISION_RAD);
+        
+        if (bHit >= 0) {
+            if (g.bullets[i].type == 2) {
 
-            if (bHit >= 0) {
+                // bounce WITHOUT counting
+                g.bullets[i].xVel *= -1;
+                g.bullets[i].yVel *= -1;
+            
+                float ang = atan2f(g.bullets[i].yVel, g.bullets[i].xVel)
+                          + ((rand() % 21) - 10) * 0.02f;
+            
+                float spd = g.bullets[i].vel;
+            
+                g.bullets[i].xVel = cosf(ang) * spd;
+                g.bullets[i].yVel = sinf(ang) * spd;
+            
+                // push bullet slightly away so it doesn't get stuck
+                g.bullets[i].x += g.bullets[i].xVel * 2;
+                g.bullets[i].y += g.bullets[i].yVel * 2;
+            } else {
                 if (!g.powerups.pierce)
                     g.bullets[i].active = 0;
-
-                continue;
             }
+        
+            continue;
+        }
 
             int eHit = enemy_check_bullet_hit(
-                g.bullets[i].x,
-                g.bullets[i].y,
-                BULLET_COLLISION_RAD,
-                g.currentWeapon);
+                    g.bullets[i].x, g.bullets[i].y, BULLET_COLLISION_RAD, g.currentWeapon, g.bullets[i].damage);
 
             if (eHit >= 0) {
                 if (g.bullets[i].type == 2) {
@@ -1348,6 +1393,66 @@ void physics(float dt)
             }
         }
     }
+}
+
+void resetGame()
+{
+    // core state
+    g.state = STATE_TITLE;
+    g.levelIntroTimer = 0;
+    g.currentLevel = 1;
+    lv_current = 0;
+
+    // player
+    g.shipx = g.xres / 2;
+    g.shipy = 160;
+    g.shipAngle = 0;
+    g.playerHP = 10;
+    g.displayHP = 10;
+
+    // weapons
+    g.currentWeapon = 0;
+    g.weaponFrame = 0;
+    g.weaponTimer = 0;
+
+    // bullets
+    for (int i = 0; i < MAX_BULLETS; i++)
+        g.bullets[i].active = 0;
+
+    // powerups
+    initPowerups();
+
+    g.powerups.fireRateLevel = 0;
+    g.powerups.speedLevel = 0;
+    g.powerups.damageLevel = 0;
+    g.powerups.homing = false;
+    g.powerups.pierce = false;
+
+    g.powerupFill[0] = g.powerupFill[1] = 0;
+    g.selectedPowerup = -1;
+
+    // enemies/levels
+    init_enemies();
+    levelsInit();
+
+    // obstacles
+    obstaclesReset();
+    obstaclesRemoveAllMines();
+
+    for (int i = 0; i < OBS_BARRIER_COUNT; i++)
+        obs_barriers[i].active = false;
+
+    obs_gate.active = false;
+
+    // restore title screen asteroids
+    obstaclesSpawnTitleAsteroids();
+
+    // UI
+    g.startBtn.visible = false;
+    g.title.timer = 0;
+
+    // timers
+    g.spawnTimer = 0;
 }
 
 void renderShipBreakup()
@@ -1760,8 +1865,9 @@ void render()
     if (g.state == STATE_DEAD)
         levelsRenderDeath();
 
-    if (g.state == STATE_GAME_WON)
+    if (g.state == STATE_GAME_WON) {
         levelsRenderGameWon();
+    }
 
     if (g.state == STATE_PLAYING) {
         renderHealthBar();

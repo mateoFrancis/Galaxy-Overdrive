@@ -6,6 +6,8 @@
 
 #define TOTAL_LEVELS 6
 
+void resetGame();
+
 struct LevelDesc {
     const char *title, *subtitle;
     int asteroidCount, mineCount;
@@ -367,9 +369,15 @@ void levelsUpdate(float dt)
     }
 
     if (done) {
+
         lv_complete = true;
         lv_completeTimer = 0;
-        g.state = STATE_LEVEL_COMPLETE;
+
+        if (lv_current == TOTAL_LEVELS - 1) {
+            g.state = STATE_GAME_WON;   // trigger win screen
+        } else {
+            g.state = STATE_LEVEL_COMPLETE;
+        }
     }
 }
 
@@ -532,6 +540,9 @@ void levelsRenderGameWon()
 
     r.bot = (int)(py + ph * 0.5f - 8);
     ggprint16(&r, 0, 0x0044ff66, "Galaxy Overdrive Complete");
+    
+    r.bot -= 40;
+    ggprint12(&r, 0, 0x00cccccc, "R - Restart Game");
 }
 
 // death screen
@@ -828,7 +839,10 @@ bool levelsHandleKey(int key)
 {
     // stay on win screen
     if (g.state == STATE_GAME_WON) {
-        return true;
+        if (key == XK_r || key == XK_R) {
+            resetGame();
+            return true;
+        }
     }
 
     // death screen keys
@@ -868,6 +882,8 @@ bool levelsHandleKey(int key)
 
             obstaclesSpawnTitleAsteroids();
             init_enemies();
+            
+            resetGame();
 
             return true;
         }

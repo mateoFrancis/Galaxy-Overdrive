@@ -251,10 +251,10 @@ void spawn_enemy(float playerX, float playerY, int screenW, int screenH)
 
             if (enemies[i].type == 1) {
                 enemies[i].speed = 3.2f;
-                enemies[i].hp = 1;
+                enemies[i].hp = 2;
             } else {
                 enemies[i].speed = 2.0f;
-                enemies[i].hp = 2;
+                enemies[i].hp = 3;
             }
 
             int side = rand() % 4;
@@ -330,38 +330,44 @@ void enemies_physics(float playerX, float playerY, int screenW, int screenH, flo
 }
 
 // returns -1 for no hit, 0 for hit, 1 for killed
-int enemy_check_bullet_hit(float bx, float by, float br, int weapon)
+
+int enemy_check_bullet_hit(float bx, float by, float br, int weapon, int damage)
 {
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active)
-            continue;
-
-        if (enemies[i].exploding)
-            continue;
+        if (!enemies[i].active) continue;
+        if (enemies[i].exploding) continue;
 
         float er = enemies[i].width * 0.4f;
         float dx = bx - enemies[i].x;
         float dy = by - enemies[i].y;
         float rsum = er + br;
 
-        if (dx * dx + dy * dy < rsum * rsum) {
-            int damage = 1;
+        if (dx*dx + dy*dy < rsum*rsum) {
 
-            if (weapon == 1)
-                damage = 2;
+            int finalDamage = damage;
 
-            enemies[i].hp -= damage;
+            // fallback if damage not provided
+            if (finalDamage <= 0) {
+                finalDamage = 1;
+                if (weapon == 1)
+                    finalDamage += 1;
+            } else {
+                if (weapon == 1)
+                    finalDamage += 1;
+            }
+
+            enemies[i].hp -= finalDamage;
 
             if (enemies[i].hp <= 0) {
                 start_explosion(enemies[i]);
-                return 1;
+                return 1; // ✅ killed
             }
 
-            return 0;
+            return 0; // ✅ hit but not killed
         }
     }
 
-    return -1;
+    return -1; // no hit
 }
 
 bool enemy_check_player_collision(float px, float py, float pr)
